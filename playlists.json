@@ -1,0 +1,28 @@
+{
+  "lengo": {
+    "creator": "0xlengo",
+    "songs": [
+      {
+        "url": "https://www.youtube.com/watch?v=kJQP7kiw5Fk",
+        "title": "Luis Fonsi - Despacito ft. Daddy Yankee"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=OLIl-BSLudk",
+        "title": "Millonario te vinimo a ver"
+      }
+    ]
+  },
+  "desstro": {
+    "creator": "0xlengo",
+    "songs": [
+      {
+        "url": "https://www.youtube.com/watch?v=IFxv42xPPXU",
+        "title": "Mambrú - A Veces (Official Video)"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=Zgxxx_yDveg",
+        "title": "PLUMA PLUMA GAY | Los Morancos (Parodia)"
+      }
+    ]
+  }
+}
