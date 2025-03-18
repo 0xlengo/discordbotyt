@@ -1,8 +1,11 @@
-const { Client, GatewayIntentBits } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, StreamType, AudioPlayerStatus } = require('@discordjs/voice');
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, StreamType, AudioPlayerStatus, VoiceConnectionStatus } = require('@discordjs/voice');
 const { spawn } = require('child_process');
 const youtubedl = require('youtube-dl-exec');
 require('dotenv').config();
+
+// Cola de reproducción global (por servidor)
+const queues = new Map();
 
 const client = new Client({
     intents: [
@@ -15,95 +18,658 @@ const client = new Client({
 
 const prefix = '!';
 
-// Función para crear una barra de progreso
-function createProgressBar(progress, total, length = 20) {
-    const filled = Math.round(length * (progress / total));
-    const empty = length - filled;
-    const bar = '█'.repeat(filled) + '░'.repeat(empty);
-    return `[${bar}] ${Math.round((progress / total) * 100)}%`;
+// Función para reproducir la siguiente canción en la cola
+async function playNext(guildId, message) {
+    console.log(`[DEBUG] Intentando reproducir la siguiente canción para ${guildId}`);
+    
+    const serverQueue = queues.get(guildId);
+    if (!serverQueue) {
+        console.log(`[DEBUG] No hay cola para ${guildId}`);
+        return;
+    }
+    
+    if (serverQueue.songs.length === 0) {
+        console.log(`[DEBUG] Cola vacía para ${guildId}, desconectando`);
+        if (serverQueue.connection) {
+            serverQueue.connection.destroy();
+        }
+        queues.delete(guildId);
+        return;
+    }
+    
+    const currentSong = serverQueue.songs[0];
+    console.log(`[DEBUG] Reproduciendo: ${currentSong.title}`);
+    
+    try {
+        // Obtener URL directa usando youtube-dl-exec
+        console.log('[DEBUG] Obteniendo información del video');
+        const output = await youtubedl(currentSong.url, {
+            dumpSingleJson: true,
+            noWarnings: true,
+            noCallHome: true,
+            preferFreeFormats: true,
+            youtubeSkipDashManifest: true
+        });
+        
+        // Intentar obtener formato de audio
+        let audioUrl = null;
+        if (output.formats && output.formats.length > 0) {
+            // Buscar el mejor formato de audio
+            const audioFormats = output.formats.filter(format => 
+                format.acodec !== 'none' && (format.vcodec === 'none' || format.vcodec === null)
+            );
+            
+            if (audioFormats.length > 0) {
+                // Ordenar por calidad (bitrate)
+                audioFormats.sort((a, b) => (b.abr || 0) - (a.abr || 0));
+                audioUrl = audioFormats[0].url;
+            } else {
+                // Si no hay formatos de solo audio, usar el primer formato con audio
+                const formatWithAudio = output.formats.find(format => format.acodec !== 'none');
+                if (formatWithAudio) {
+                    audioUrl = formatWithAudio.url;
+                }
+            }
+        }
+        
+        if (!audioUrl) {
+            audioUrl = output.url; // Usar URL principal si no se encontró formato específico
+        }
+        
+        // Guardar título real en la canción
+        currentSong.title = output.title || currentSong.title;
+        currentSong.thumbnail = output.thumbnail || null;
+        currentSong.duration = output.duration || 0;
+        
+        // Iniciar FFmpeg con la URL directa
+        console.log('[DEBUG] Iniciando FFmpeg');
+        const ffmpeg = spawn('ffmpeg', [
+            '-reconnect', '1',
+            '-reconnect_streamed', '1',
+            '-reconnect_delay_max', '5',
+            '-i', audioUrl,
+            '-f', 's16le',
+            '-ar', '48000',
+            '-ac', '2',
+            '-loglevel', 'debug',
+            'pipe:1'
+        ]);
+        
+        // Monitorear los datos de FFmpeg
+        let dataReceived = false;
+        let dataCount = 0;
+        
+        ffmpeg.stdout.on('data', chunk => {
+            if (!dataReceived) {
+                console.log('[DEBUG] Primeros datos de audio recibidos');
+                dataReceived = true;
+            }
+            dataCount += chunk.length;
+            if (dataCount % 1000000 === 0) {  // Cada ~1MB
+                console.log(`[DEBUG] Datos de audio recibidos: ${dataCount / 1000000}MB`);
+            }
+        });
+        
+        ffmpeg.stderr.on('data', data => {
+            const message = data.toString();
+            // Solo registrar mensajes importantes para no saturar la consola
+            if (message.includes('Error') || message.includes('error') || message.includes('failed')) {
+                console.error(`[DEBUG] FFmpeg error: ${message}`);
+            }
+        });
+        
+        ffmpeg.on('close', (code, signal) => {
+            console.log(`[DEBUG] FFmpeg cerró con código ${code} y señal ${signal || 'ninguna'}`);
+            if (code !== 0 && serverQueue.player.state.status === AudioPlayerStatus.Playing) {
+                console.error('[DEBUG] FFmpeg terminó inesperadamente');
+                // No detenemos el reproductor aquí, ya que podría estar recibiendo datos aún
+            }
+        });
+        
+        // Crear recurso de audio
+        const resource = createAudioResource(ffmpeg.stdout, {
+            inputType: StreamType.Raw,
+            inlineVolume: true
+        });
+        
+        // Configurar volumen
+        resource.volume.setVolume(serverQueue.volume / 10);
+        
+        // Guardar información para comandos como forward
+        serverQueue.currentResource = resource;
+        serverQueue.currentFfmpeg = ffmpeg;
+        serverQueue.currentStartTime = Date.now();
+        serverQueue.audioUrl = audioUrl;
+        
+        // Crear reproductor si no existe
+        if (!serverQueue.player) {
+            console.log('[DEBUG] Creando nuevo reproductor de audio');
+            serverQueue.player = createAudioPlayer();
+            
+            // Configurar eventos del reproductor
+            serverQueue.player.on(AudioPlayerStatus.Idle, () => {
+                console.log('[DEBUG] Reproductor inactivo');
+                
+                // Si está en modo repetición de canción actual
+                if (serverQueue.repeat) {
+                    console.log('[DEBUG] Repetición activada, reproduciendo la misma canción');
+                    playNext(guildId, message);
+                    return;
+                }
+                
+                // Si está en modo bucle de cola
+                if (serverQueue.loop && serverQueue.songs.length > 0) {
+                    console.log('[DEBUG] Bucle activado, moviendo canción actual al final de la cola');
+                    const finishedSong = serverQueue.songs.shift();
+                    serverQueue.songs.push(finishedSong);
+                } else {
+                    console.log('[DEBUG] Pasando a la siguiente canción');
+                    serverQueue.songs.shift(); // Quitar la canción que terminó
+                }
+                
+                // Esperar un momento antes de reproducir la siguiente canción para evitar ciclos rápidos
+                setTimeout(() => {
+                    playNext(guildId, message);
+                }, 500);
+            });
+            
+            serverQueue.player.on('error', error => {
+                console.error('[DEBUG] Error en el reproductor:', error);
+                message.channel.send('❌ Error durante la reproducción, pasando a la siguiente canción.');
+                serverQueue.songs.shift(); // Quitar la canción con error
+                playNext(guildId, message);
+            });
+            
+            // Suscribir el reproductor a la conexión
+            serverQueue.connection.subscribe(serverQueue.player);
+        }
+        
+        // Reproducir la canción con verificación
+        serverQueue.player.play(resource);
+        
+        // Verificar si la reproducción comienza correctamente
+        let playbackStarted = false;
+        const playbackCheck = setTimeout(() => {
+            if (!playbackStarted && serverQueue.player.state.status !== AudioPlayerStatus.Playing) {
+                console.error('[DEBUG] La reproducción no se inició correctamente después de 5 segundos');
+                message.channel.send('❌ Error al iniciar la reproducción. Intentando con la siguiente canción...');
+                serverQueue.songs.shift();
+                playNext(guildId, message);
+            }
+        }, 5000);
+        
+        // Limpiar el temporizador cuando la reproducción comience
+        serverQueue.player.once(AudioPlayerStatus.Playing, () => {
+            playbackStarted = true;
+            clearTimeout(playbackCheck);
+            console.log('[DEBUG] Reproducción iniciada correctamente');
+        });
+        
+        // Informar al usuario
+        const embed = new EmbedBuilder()
+            .setColor('#0099ff')
+            .setTitle('▶️ Reproduciendo ahora')
+            .setDescription(`[${currentSong.title}](${currentSong.url})`)
+            .setFooter({ text: `Solicitado por ${currentSong.requestedBy}` });
+            
+        if (currentSong.thumbnail) {
+            embed.setThumbnail(currentSong.thumbnail);
+        }
+        
+        if (currentSong.duration) {
+            const minutes = Math.floor(currentSong.duration / 60);
+            const seconds = currentSong.duration % 60;
+            embed.addFields({ name: 'Duración', value: `${minutes}:${seconds.toString().padStart(2, '0')}` });
+        }
+            
+        message.channel.send({ embeds: [embed] });
+        
+    } catch (error) {
+        console.error('[DEBUG] Error al reproducir:', error);
+        message.channel.send('❌ Error al reproducir esta canción.');
+        serverQueue.songs.shift();
+        playNext(guildId, message);
+    }
+}
+
+// Función para formatear tiempo (segundos -> MM:SS)
+function formatTime(seconds) {
+    const minutes = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${minutes}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Función para generar una barra de progreso visual
+function createProgressBar(current, total, length = 15) {
+    const percentage = current / total;
+    const progress = Math.round(length * percentage);
+    const emptyProgress = length - progress;
+    
+    const progressText = '▇'.repeat(progress);
+    const emptyProgressText = '—'.repeat(emptyProgress);
+    const percentageText = Math.round(percentage * 100) + '%';
+    
+    return `[${progressText}${emptyProgressText}] ${percentageText}`;
 }
 
 client.on('messageCreate', async (message) => {
     if (!message.content.startsWith(prefix) || message.author.bot) return;
 
-    const command = message.content.slice(prefix.length).trim();
+    const args = message.content.slice(prefix.length).trim().split(/ +/);
+    const command = args.shift().toLowerCase();
     
-    if (command.startsWith('play')) {
-        console.log('[DEBUG] Comando play recibido');
-        console.log('[DEBUG] Comando completo:', command);
-        
-        const voiceChannel = message.member.voice.channel;
-        if (!voiceChannel) {
-            return message.reply('¡Necesitas unirte a un canal de voz primero!');
-        }
-
-        try {
-            const url = command.slice(5).trim();
-            console.log('[DEBUG] URL a reproducir:', url);
-            
-            if (!url) {
-                return message.reply('¡Necesitas proporcionar una URL!');
+    console.log(`[DEBUG] Comando recibido: ${command}`);
+    
+    // Obtener la cola del servidor
+    const guildId = message.guild.id;
+    let serverQueue = queues.get(guildId);
+    
+    switch (command) {
+        case 'play':
+            const voiceChannel = message.member.voice.channel;
+            if (!voiceChannel) {
+                return message.reply('¡Necesitas unirte a un canal de voz primero!');
             }
-
-            // Iniciar proceso de conexión
-            console.log('[DEBUG] Intentando conectar al canal de voz');
-            const connection = joinVoiceChannel({
-                channelId: voiceChannel.id,
-                guildId: message.guild.id,
-                adapterCreator: message.guild.voiceAdapterCreator,
-            });
             
-            // Mostrar mensaje de inicialización
+            const url = args.join(' ');
+            if (!url) {
+                return message.reply('¡Necesitas proporcionar una URL o término de búsqueda!');
+            }
+            
+            console.log(`[DEBUG] URL a reproducir: ${url}`);
+            
+            // Mensaje de estado inicial
             const statusMessage = await message.reply('🔄 Obteniendo información del video...');
-
+            
             try {
-                // Obtener URL directa usando youtube-dl-exec
-                console.log('[DEBUG] Obteniendo URL directa de audio');
-                const output = await youtubedl(url, {
+                // Obtener información básica del video para la cola
+                const videoInfo = await youtubedl(url, {
                     dumpSingleJson: true,
+                    skipDownload: true,
                     noWarnings: true,
                     noCallHome: true,
                     preferFreeFormats: true,
-                    youtubeSkipDashManifest: true
                 });
                 
-                console.log('[DEBUG] Información del video obtenida');
+                const song = {
+                    title: videoInfo.title || 'Canción desconocida',
+                    url: videoInfo.webpage_url || url,
+                    duration: videoInfo.duration,
+                    thumbnail: videoInfo.thumbnail,
+                    requestedBy: message.author.username
+                };
                 
-                // Intentar obtener formato de audio
-                let audioUrl = null;
-                if (output.formats && output.formats.length > 0) {
-                    // Buscar el mejor formato de audio
-                    const audioFormats = output.formats.filter(format => 
-                        format.acodec !== 'none' && (format.vcodec === 'none' || format.vcodec === null)
-                    );
+                // Si no existe una cola para este servidor, créala
+                if (!serverQueue) {
+                    const queueConstruct = {
+                        textChannel: message.channel,
+                        voiceChannel: voiceChannel,
+                        connection: null,
+                        player: null,
+                        songs: [],
+                        volume: 5, // Volumen inicial (0-10)
+                        playing: true,
+                        loop: false, // Modo bucle
+                        repeat: false, // Repetir canción actual
+                        currentResource: null,
+                        currentFfmpeg: null,
+                        currentStartTime: null,
+                        audioUrl: null
+                    };
                     
-                    if (audioFormats.length > 0) {
-                        // Ordenar por calidad (bitrate)
-                        audioFormats.sort((a, b) => (b.abr || 0) - (a.abr || 0));
-                        audioUrl = audioFormats[0].url;
-                    } else {
-                        // Si no hay formatos de solo audio, usar el primer formato con audio
-                        const formatWithAudio = output.formats.find(format => format.acodec !== 'none');
-                        if (formatWithAudio) {
-                            audioUrl = formatWithAudio.url;
-                        }
+                    // Agregar la canción a la cola
+                    queueConstruct.songs.push(song);
+                    queues.set(guildId, queueConstruct);
+                    
+                    console.log(`[DEBUG] Cola creada para ${guildId}`);
+                    
+                    try {
+                        // Crear una conexión al canal de voz
+                        console.log(`[DEBUG] Conectando al canal de voz ${voiceChannel.id}`);
+                        const connection = joinVoiceChannel({
+                            channelId: voiceChannel.id,
+                            guildId: guildId,
+                            adapterCreator: message.guild.voiceAdapterCreator,
+                        });
+                        
+                        // Establecer manejadores de eventos para la conexión
+                        connection.on(VoiceConnectionStatus.Ready, () => {
+                            console.log('[DEBUG] Conexión lista');
+                        });
+                        
+                        connection.on(VoiceConnectionStatus.Disconnected, async () => {
+                            console.log('[DEBUG] Desconectado del canal de voz');
+                            try {
+                                queues.delete(guildId);
+                            } catch (err) {
+                                console.error('[DEBUG] Error al limpiar la cola:', err);
+                            }
+                        });
+                        
+                        queueConstruct.connection = connection;
+                        
+                        // Comenzar a reproducir
+                        statusMessage.edit(`✅ **${song.title}** ha sido añadida a la cola.`);
+                        await playNext(guildId, message);
+                        
+                    } catch (err) {
+                        console.error('[DEBUG] Error al conectar:', err);
+                        queues.delete(guildId);
+                        statusMessage.edit('❌ Error al conectar al canal de voz.');
+                        return;
+                    }
+                } else {
+                    // Ya existe una cola, solo agregar la canción
+                    serverQueue.songs.push(song);
+                    console.log(`[DEBUG] Canción añadida a la cola existente: ${song.title}`);
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#0099ff')
+                        .setTitle('🎵 Añadida a la cola')
+                        .setDescription(`[${song.title}](${song.url})`)
+                        .setFooter({ text: `Solicitado por ${message.author.username}` });
+                        
+                    if (song.thumbnail) {
+                        embed.setThumbnail(song.thumbnail);
+                    }
+                    
+                    if (song.duration) {
+                        const minutes = Math.floor(song.duration / 60);
+                        const seconds = song.duration % 60;
+                        embed.addFields({ name: 'Duración', value: `${minutes}:${seconds.toString().padStart(2, '0')}` });
+                    }
+                    
+                    statusMessage.edit({ content: null, embeds: [embed] });
+                }
+                
+            } catch (error) {
+                console.error('[DEBUG] Error al obtener info del video:', error);
+                statusMessage.edit('❌ Error al obtener información del video. Verifica la URL.');
+            }
+            break;
+            
+        case 'skip':
+            if (!serverQueue) {
+                return message.reply('¡No hay nada en reproducción para saltar!');
+            }
+            
+            if (!message.member.voice.channel) {
+                return message.reply('¡Debes estar en un canal de voz para usar este comando!');
+            }
+            
+            message.reply('⏭️ Saltando canción actual...');
+            if (serverQueue.player) {
+                serverQueue.player.stop(); // Esto desencadenará el evento Idle y pasará a la siguiente canción
+            }
+            break;
+            
+        case 'stop':
+            if (!serverQueue) {
+                return message.reply('¡No hay nada en reproducción para detener!');
+            }
+            
+            if (!message.member.voice.channel) {
+                return message.reply('¡Debes estar en un canal de voz para usar este comando!');
+            }
+            
+            serverQueue.songs = [];
+            if (serverQueue.player) {
+                serverQueue.player.stop();
+            }
+            
+            if (serverQueue.connection) {
+                serverQueue.connection.destroy();
+            }
+            
+            queues.delete(guildId);
+            message.reply('⏹️ Reproducción detenida y cola limpiada.');
+            break;
+            
+        case 'pause':
+            if (!serverQueue) {
+                return message.reply('¡No hay nada en reproducción para pausar!');
+            }
+            
+            if (!message.member.voice.channel) {
+                return message.reply('¡Debes estar en un canal de voz para usar este comando!');
+            }
+            
+            if (serverQueue.player.state.status === AudioPlayerStatus.Playing) {
+                serverQueue.player.pause();
+                message.reply('⏸️ Reproducción pausada.');
+            } else {
+                message.reply('¡La reproducción ya está pausada!');
+            }
+            break;
+            
+        case 'resume':
+            if (!serverQueue) {
+                return message.reply('¡No hay nada en reproducción para reanudar!');
+            }
+            
+            if (!message.member.voice.channel) {
+                return message.reply('¡Debes estar en un canal de voz para usar este comando!');
+            }
+            
+            if (serverQueue.player.state.status === AudioPlayerStatus.Paused) {
+                serverQueue.player.unpause();
+                message.reply('▶️ Reproducción reanudada.');
+            } else {
+                message.reply('¡La reproducción no está pausada!');
+            }
+            break;
+            
+        case 'volume':
+            if (!serverQueue) {
+                return message.reply('¡No hay nada en reproducción para ajustar el volumen!');
+            }
+            
+            if (!message.member.voice.channel) {
+                return message.reply('¡Debes estar en un canal de voz para usar este comando!');
+            }
+            
+            const volume = parseInt(args[0]);
+            if (isNaN(volume) || volume < 0 || volume > 10) {
+                return message.reply('¡Por favor, proporciona un número del 0 al 10!');
+            }
+            
+            serverQueue.volume = volume;
+            if (serverQueue.currentResource) {
+                serverQueue.currentResource.volume.setVolume(volume / 10);
+            }
+            
+            message.reply(`🔊 Volumen ajustado a ${volume}/10.`);
+            break;
+            
+        case 'nowplaying':
+        case 'np':
+            if (!serverQueue || !serverQueue.songs[0]) {
+                return message.reply('¡No hay nada en reproducción!');
+            }
+            
+            const currentSongInfo = serverQueue.songs[0];
+            let currentTime = 0;
+            let totalTime = currentSongInfo.duration || 0;
+            
+            if (serverQueue.currentStartTime) {
+                const elapsed = (Date.now() - serverQueue.currentStartTime) / 1000;
+                currentTime = Math.min(elapsed, totalTime);
+            }
+            
+            const embed = new EmbedBuilder()
+                .setColor('#0099ff')
+                .setTitle('🎵 Reproduciendo ahora')
+                .setDescription(`[${currentSongInfo.title}](${currentSongInfo.url})`);
+                
+            if (currentSongInfo.thumbnail) {
+                embed.setThumbnail(currentSongInfo.thumbnail);
+            }
+            
+            // Añadir barra de progreso si conocemos la duración
+            if (totalTime > 0) {
+                const progressBar = createProgressBar(currentTime, totalTime);
+                embed.addFields({ 
+                    name: 'Progreso', 
+                    value: `${formatTime(currentTime)} ${progressBar} ${formatTime(totalTime)}` 
+                });
+            }
+            
+            embed.addFields(
+                { name: 'Solicitado por', value: currentSongInfo.requestedBy }
+            );
+            
+            message.channel.send({ embeds: [embed] });
+            break;
+            
+        case 'queue':
+            if (!serverQueue || serverQueue.songs.length === 0) {
+                return message.reply('¡No hay canciones en la cola!');
+            }
+            
+            const currentSong = serverQueue.songs[0];
+            let queueList = `**Cola de Reproducción:**\n\n🎵 **Reproduciendo ahora:**\n[${currentSong.title}](${currentSong.url}) | Solicitado por: ${currentSong.requestedBy}\n\n`;
+            
+            if (serverQueue.songs.length > 1) {
+                queueList += '**Siguientes canciones:**\n';
+                for (let i = 1; i < serverQueue.songs.length; i++) {
+                    const song = serverQueue.songs[i];
+                    queueList += `${i}. [${song.title}](${song.url}) | Solicitado por: ${song.requestedBy}\n`;
+                    
+                    // Si la lista es demasiado larga, cortar
+                    if (i === 10 && serverQueue.songs.length > 11) {
+                        queueList += `\n*...y ${serverQueue.songs.length - 11} canciones más*`;
+                        break;
                     }
                 }
+            }
+            
+            const queueEmbed = new EmbedBuilder()
+                .setColor('#0099ff')
+                .setTitle('🎵 Cola de Reproducción')
+                .setDescription(queueList);
                 
-                if (!audioUrl) {
-                    audioUrl = output.url; // Usar URL principal si no se encontró formato específico
-                }
+            message.channel.send({ embeds: [queueEmbed] });
+            break;
+            
+        case 'loop':
+            if (!serverQueue) {
+                return message.reply('¡No hay nada en reproducción!');
+            }
+            
+            if (!message.member.voice.channel) {
+                return message.reply('¡Debes estar en un canal de voz para usar este comando!');
+            }
+            
+            serverQueue.loop = !serverQueue.loop;
+            message.reply(`🔄 Modo bucle de cola: ${serverQueue.loop ? 'Activado' : 'Desactivado'}`);
+            break;
+            
+        case 'repeat':
+            if (!serverQueue) {
+                return message.reply('¡No hay nada en reproducción!');
+            }
+            
+            if (!message.member.voice.channel) {
+                return message.reply('¡Debes estar en un canal de voz para usar este comando!');
+            }
+            
+            serverQueue.repeat = !serverQueue.repeat;
+            message.reply(`🔂 Repetición de canción actual: ${serverQueue.repeat ? 'Activada' : 'Desactivada'}`);
+            break;
+            
+        case 'remove':
+            if (!serverQueue) {
+                return message.reply('¡No hay cola de reproducción!');
+            }
+            
+            if (!message.member.voice.channel) {
+                return message.reply('¡Debes estar en un canal de voz para usar este comando!');
+            }
+            
+            const index = parseInt(args[0]);
+            if (isNaN(index) || index < 1 || index >= serverQueue.songs.length) {
+                return message.reply(`¡Por favor, proporciona un índice válido entre 1 y ${serverQueue.songs.length - 1}!`);
+            }
+            
+            const removedSong = serverQueue.songs.splice(index, 1)[0];
+            message.reply(`🗑️ Eliminada: **${removedSong.title}**`);
+            break;
+            
+        case 'clear':
+            if (!serverQueue) {
+                return message.reply('¡No hay cola de reproducción!');
+            }
+            
+            if (!message.member.voice.channel) {
+                return message.reply('¡Debes estar en un canal de voz para usar este comando!');
+            }
+            
+            // Mantener solo la canción actual
+            const currentlyPlaying = serverQueue.songs[0];
+            serverQueue.songs = [currentlyPlaying];
+            
+            message.reply('🧹 Cola limpiada. Solo se conserva la canción actual.');
+            break;
+            
+        case 'shuffle':
+            if (!serverQueue || serverQueue.songs.length <= 1) {
+                return message.reply('¡No hay suficientes canciones en la cola para mezclar!');
+            }
+            
+            if (!message.member.voice.channel) {
+                return message.reply('¡Debes estar en un canal de voz para usar este comando!');
+            }
+            
+            // Mezclar todas las canciones excepto la actual
+            const current = serverQueue.songs[0];
+            let queue = serverQueue.songs.slice(1);
+            
+            // Algoritmo de Fisher-Yates para mezclar
+            for (let i = queue.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [queue[i], queue[j]] = [queue[j], queue[i]];
+            }
+            
+            // Reconstruir la cola
+            serverQueue.songs = [current, ...queue];
+            
+            message.reply('🔀 Cola mezclada.');
+            break;
+            
+        case 'forward':
+            if (!serverQueue || !serverQueue.songs[0]) {
+                return message.reply('¡No hay nada en reproducción!');
+            }
+            
+            if (!message.member.voice.channel) {
+                return message.reply('¡Debes estar en un canal de voz para usar este comando!');
+            }
+            
+            // Por defecto, avanzar 10 segundos
+            const seconds = args[0] ? parseInt(args[0]) : 10;
+            
+            if (isNaN(seconds) || seconds <= 0) {
+                return message.reply('¡Por favor, proporciona un número válido de segundos para avanzar!');
+            }
+            
+            const currentSongForward = serverQueue.songs[0];
+            
+            // Reiniciar la reproducción con la posición avanzada
+            if (serverQueue.audioUrl && serverQueue.currentFfmpeg) {
+                // Detener el proceso actual de FFmpeg
+                serverQueue.currentFfmpeg.kill();
                 
-                console.log('[DEBUG] URL de audio obtenida');
-                statusMessage.edit('🔄 Preparando reproducción...');
+                // Calcular tiempo actual
+                const elapsed = (Date.now() - serverQueue.currentStartTime) / 1000;
+                const newPosition = elapsed + seconds;
                 
-                // Iniciar FFmpeg con la URL directa obtenida
-                console.log('[DEBUG] Iniciando FFmpeg');
+                // Crear nuevo proceso FFmpeg con la nueva posición
                 const ffmpeg = spawn('ffmpeg', [
                     '-reconnect', '1',
                     '-reconnect_streamed', '1',
                     '-reconnect_delay_max', '5',
-                    '-i', audioUrl,
+                    '-ss', newPosition.toString(),
+                    '-i', serverQueue.audioUrl,
                     '-f', 's16le',
                     '-ar', '48000',
                     '-ac', '2',
@@ -111,78 +677,122 @@ client.on('messageCreate', async (message) => {
                     'pipe:1'
                 ]);
                 
-                let dataReceived = false;
-                
-                ffmpeg.stdout.on('data', chunk => {
-                    if (!dataReceived) {
-                        console.log('[DEBUG] Datos de audio recibidos');
-                        dataReceived = true;
-                    }
-                });
-                
-                ffmpeg.stderr.on('data', data => {
-                    console.log(`[DEBUG] FFmpeg stderr: ${data.toString()}`);
-                });
-                
-                ffmpeg.on('close', code => {
-                    console.log(`[DEBUG] FFmpeg cerrado con código: ${code}`);
-                    if (code !== 0 && !dataReceived) {
-                        statusMessage.edit('❌ Error al procesar el audio.');
-                    }
-                });
-                
-                // Crear reproductor y recurso
-                console.log('[DEBUG] Configurando reproductor');
-                const player = createAudioPlayer();
+                // Crear nuevo recurso
                 const resource = createAudioResource(ffmpeg.stdout, {
                     inputType: StreamType.Raw,
                     inlineVolume: true
                 });
                 
-                resource.volume.setVolume(1);
+                // Configurar volumen
+                resource.volume.setVolume(serverQueue.volume / 10);
                 
-                // Eventos del reproductor
-                player.on('stateChange', (oldState, newState) => {
-                    console.log(`[DEBUG] Estado del reproductor: ${oldState.status} -> ${newState.status}`);
-                });
+                // Actualizar información
+                serverQueue.currentResource = resource;
+                serverQueue.currentFfmpeg = ffmpeg;
+                serverQueue.currentStartTime = Date.now() - (newPosition * 1000);
                 
-                player.on(AudioPlayerStatus.Playing, () => {
-                    console.log('[DEBUG] Reproducción iniciada');
-                    statusMessage.edit(`▶️ Reproduciendo: ${output.title || "Audio"}`);
-                });
+                // Reproducir
+                serverQueue.player.play(resource);
                 
-                player.on(AudioPlayerStatus.Idle, () => {
-                    console.log('[DEBUG] Reproducción finalizada');
-                    statusMessage.edit('⏹️ Reproducción finalizada');
-                    connection.destroy();
-                });
-                
-                player.on('error', err => {
-                    console.error('[DEBUG] Error en el reproductor:', err);
-                    statusMessage.edit('❌ Error durante la reproducción.');
-                    connection.destroy();
-                });
-                
-                // Suscribir e iniciar reproducción
-                connection.subscribe(player);
-                player.play(resource);
-                console.log('[DEBUG] Reproducción iniciada');
-                
-            } catch (innerError) {
-                console.error('[DEBUG] Error al obtener o reproducir audio:', innerError);
-                statusMessage.edit('❌ Error al obtener o reproducir el audio.');
-                connection.destroy();
+                message.reply(`⏩ Avanzado ${seconds} segundos.`);
+            } else {
+                message.reply('❌ No se puede avanzar en esta canción.');
+            }
+            break;
+            
+        case 'rewind':
+            if (!serverQueue || !serverQueue.songs[0]) {
+                return message.reply('¡No hay nada en reproducción!');
             }
             
-        } catch (error) {
-            console.error('[DEBUG] Error general:', error);
-            message.reply('❌ Error al reproducir. Verifica la URL.');
-        }
+            if (!message.member.voice.channel) {
+                return message.reply('¡Debes estar en un canal de voz para usar este comando!');
+            }
+            
+            // Por defecto, retroceder 10 segundos
+            const rewindSeconds = args[0] ? parseInt(args[0]) : 10;
+            
+            if (isNaN(rewindSeconds) || rewindSeconds <= 0) {
+                return message.reply('¡Por favor, proporciona un número válido de segundos para retroceder!');
+            }
+            
+            // Reiniciar la reproducción con la posición retrocedida
+            if (serverQueue.audioUrl && serverQueue.currentFfmpeg) {
+                // Detener el proceso actual de FFmpeg
+                serverQueue.currentFfmpeg.kill();
+                
+                // Calcular tiempo actual
+                const elapsed = (Date.now() - serverQueue.currentStartTime) / 1000;
+                const newPosition = Math.max(0, elapsed - rewindSeconds);
+                
+                // Crear nuevo proceso FFmpeg con la nueva posición
+                const ffmpeg = spawn('ffmpeg', [
+                    '-reconnect', '1',
+                    '-reconnect_streamed', '1',
+                    '-reconnect_delay_max', '5',
+                    '-ss', newPosition.toString(),
+                    '-i', serverQueue.audioUrl,
+                    '-f', 's16le',
+                    '-ar', '48000',
+                    '-ac', '2',
+                    '-loglevel', 'warning',
+                    'pipe:1'
+                ]);
+                
+                // Crear nuevo recurso
+                const resource = createAudioResource(ffmpeg.stdout, {
+                    inputType: StreamType.Raw,
+                    inlineVolume: true
+                });
+                
+                // Configurar volumen
+                resource.volume.setVolume(serverQueue.volume / 10);
+                
+                // Actualizar información
+                serverQueue.currentResource = resource;
+                serverQueue.currentFfmpeg = ffmpeg;
+                serverQueue.currentStartTime = Date.now() - (newPosition * 1000);
+                
+                // Reproducir
+                serverQueue.player.play(resource);
+                
+                message.reply(`⏪ Retrocedido ${rewindSeconds} segundos.`);
+            } else {
+                message.reply('❌ No se puede retroceder en esta canción.');
+            }
+            break;
+            
+        case 'help':
+            const helpEmbed = new EmbedBuilder()
+                .setColor('#0099ff')
+                .setTitle('🤖 Comandos del Bot')
+                .setDescription('Lista de comandos disponibles:')
+                .addFields(
+                    { name: '!play [URL]', value: 'Reproduce una canción de YouTube' },
+                    { name: '!skip', value: 'Salta a la siguiente canción en la cola' },
+                    { name: '!stop', value: 'Detiene la reproducción y limpia la cola' },
+                    { name: '!pause', value: 'Pausa la reproducción actual' },
+                    { name: '!resume', value: 'Reanuda la reproducción pausada' },
+                    { name: '!queue', value: 'Muestra la cola de reproducción actual' },
+                    { name: '!np / !nowplaying', value: 'Muestra información de la canción actual' },
+                    { name: '!volume [0-10]', value: 'Ajusta el volumen de reproducción' },
+                    { name: '!loop', value: 'Activa/desactiva el bucle de toda la cola' },
+                    { name: '!repeat', value: 'Activa/desactiva la repetición de la canción actual' },
+                    { name: '!remove [índice]', value: 'Elimina una canción específica de la cola' },
+                    { name: '!clear', value: 'Limpia la cola dejando solo la canción actual' },
+                    { name: '!shuffle', value: 'Mezcla las canciones en la cola' },
+                    { name: '!forward [segundos]', value: 'Avanza la canción actual (por defecto 10s)' },
+                    { name: '!rewind [segundos]', value: 'Retrocede la canción actual (por defecto 10s)' },
+                    { name: '!help', value: 'Muestra este mensaje de ayuda' }
+                );
+                
+            message.channel.send({ embeds: [helpEmbed] });
+            break;
     }
 });
 
 client.once('ready', () => {
-    console.log('[DEBUG] Bot listo');
+    console.log(`[DEBUG] Bot listo como ${client.user.tag}`);
 });
 
 client.login(process.env.DISCORD_TOKEN);
