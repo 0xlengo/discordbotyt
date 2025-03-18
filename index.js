@@ -2,6 +2,7 @@ const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, StreamType, AudioPlayerStatus, VoiceConnectionStatus } = require('@discordjs/voice');
 const { spawn } = require('child_process');
 const youtubedl = require('youtube-dl-exec');
+const play = require('play-dl');
 require('dotenv').config();
 
 // Cola de reproducción global (por servidor)
@@ -17,6 +18,12 @@ const client = new Client({
 });
 
 const prefix = '!';
+
+play.setToken({
+    youtube: {
+        cookie: process.env.YOUTUBE_COOKIE || ''
+    }
+});
 
 // Función para reproducir la siguiente canción en la cola
 async function playNext(guildId, message) {
@@ -252,6 +259,120 @@ function createProgressBar(current, total, length = 15) {
     return `[${progressText}${emptyProgressText}] ${percentageText}`;
 }
 
+// Ahora, agrega esta función fuera del switch para procesar URLs de YouTube
+// (colócala después de la función playNext o donde consideres apropiado)
+
+async function processYoutubeUrl(url, message, voiceChannel, statusMessage) {
+    const guildId = message.guild.id;
+    let serverQueue = queues.get(guildId);
+    
+    try {
+        // Obtener información básica del video para la cola
+        const videoInfo = await youtubedl(url, {
+            dumpSingleJson: true,
+            skipDownload: true,
+            noWarnings: true,
+            noCallHome: true,
+            preferFreeFormats: true,
+        });
+        
+        const song = {
+            title: videoInfo.title || 'Canción desconocida',
+            url: videoInfo.webpage_url || url,
+            duration: videoInfo.duration,
+            thumbnail: videoInfo.thumbnail,
+            requestedBy: message.author.username
+        };
+        
+        // Si no existe una cola para este servidor, créala
+        if (!serverQueue) {
+            const queueConstruct = {
+                textChannel: message.channel,
+                voiceChannel: voiceChannel,
+                connection: null,
+                player: null,
+                songs: [],
+                volume: 5, // Volumen inicial (0-10)
+                playing: true,
+                loop: false, // Modo bucle
+                repeat: false, // Repetir canción actual
+                currentResource: null,
+                currentFfmpeg: null,
+                currentStartTime: null,
+                audioUrl: null
+            };
+            
+            // Agregar la canción a la cola
+            queueConstruct.songs.push(song);
+            queues.set(guildId, queueConstruct);
+            
+            console.log(`[DEBUG] Cola creada para ${guildId}`);
+            
+            try {
+                // Crear una conexión al canal de voz
+                console.log(`[DEBUG] Conectando al canal de voz ${voiceChannel.id}`);
+                const connection = joinVoiceChannel({
+                    channelId: voiceChannel.id,
+                    guildId: guildId,
+                    adapterCreator: message.guild.voiceAdapterCreator,
+                });
+                
+                // Establecer manejadores de eventos para la conexión
+                connection.on(VoiceConnectionStatus.Ready, () => {
+                    console.log('[DEBUG] Conexión lista');
+                });
+                
+                connection.on(VoiceConnectionStatus.Disconnected, async () => {
+                    console.log('[DEBUG] Desconectado del canal de voz');
+                    try {
+                        queues.delete(guildId);
+                    } catch (err) {
+                        console.error('[DEBUG] Error al limpiar la cola:', err);
+                    }
+                });
+                
+                queueConstruct.connection = connection;
+                
+                // Comenzar a reproducir
+                statusMessage.edit(`✅ **${song.title}** ha sido añadida a la cola.`);
+                await playNext(guildId, message);
+                
+            } catch (err) {
+                console.error('[DEBUG] Error al conectar:', err);
+                queues.delete(guildId);
+                statusMessage.edit('❌ Error al conectar al canal de voz.');
+                return;
+            }
+        } else {
+            // Ya existe una cola, solo agregar la canción
+            serverQueue.songs.push(song);
+            console.log(`[DEBUG] Canción añadida a la cola existente: ${song.title}`);
+            
+            const embed = new EmbedBuilder()
+                .setColor('#0099ff')
+                .setTitle('🎵 Añadida a la cola')
+                .setDescription(`[${song.title}](${song.url})`)
+                .setFooter({ text: `Solicitado por ${message.author.username}` });
+                
+            if (song.thumbnail) {
+                embed.setThumbnail(song.thumbnail);
+            }
+            
+            if (song.duration) {
+                const minutes = Math.floor(song.duration / 60);
+                const seconds = song.duration % 60;
+                embed.addFields({ name: 'Duración', value: `${minutes}:${seconds.toString().padStart(2, '0')}` });
+            }
+            
+            statusMessage.edit({ content: null, embeds: [embed] });
+        }
+        
+    } catch (error) {
+        console.error('[DEBUG] Error al obtener info del video:', error);
+        statusMessage.edit('❌ Error al obtener información del video. Verifica la URL.');
+    }
+}
+
 client.on('messageCreate', async (message) => {
     if (!message.content.startsWith(prefix) || message.author.bot) return;
 
@@ -271,120 +392,166 @@ client.on('messageCreate', async (message) => {
                 return message.reply('¡Necesitas unirte a un canal de voz primero!');
             }
             
-            const url = args.join(' ');
-            if (!url) {
+            const input = args.join(' ');
+            if (!input) {
                 return message.reply('¡Necesitas proporcionar una URL o término de búsqueda!');
             }
             
-            console.log(`[DEBUG] URL a reproducir: ${url}`);
+            console.log(`[DEBUG] Input recibido: ${input}`);
             
             // Mensaje de estado inicial
-            const statusMessage = await message.reply('🔄 Obteniendo información del video...');
+            const statusMessage = await message.reply('🔄 Procesando...');
             
             try {
-                // Obtener información básica del video para la cola
-                const videoInfo = await youtubedl(url, {
-                    dumpSingleJson: true,
-                    skipDownload: true,
-                    noWarnings: true,
-                    noCallHome: true,
-                    preferFreeFormats: true,
-                });
+                // Verificar si el input es una URL o un término de búsqueda
+                const isUrl = input.match(/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/);
                 
-                const song = {
-                    title: videoInfo.title || 'Canción desconocida',
-                    url: videoInfo.webpage_url || url,
-                    duration: videoInfo.duration,
-                    thumbnail: videoInfo.thumbnail,
-                    requestedBy: message.author.username
-                };
-                
-                // Si no existe una cola para este servidor, créala
-                if (!serverQueue) {
-                    const queueConstruct = {
-                        textChannel: message.channel,
-                        voiceChannel: voiceChannel,
-                        connection: null,
-                        player: null,
-                        songs: [],
-                        volume: 5, // Volumen inicial (0-10)
-                        playing: true,
-                        loop: false, // Modo bucle
-                        repeat: false, // Repetir canción actual
-                        currentResource: null,
-                        currentFfmpeg: null,
-                        currentStartTime: null,
-                        audioUrl: null
-                    };
-                    
-                    // Agregar la canción a la cola
-                    queueConstruct.songs.push(song);
-                    queues.set(guildId, queueConstruct);
-                    
-                    console.log(`[DEBUG] Cola creada para ${guildId}`);
+                if (isUrl) {
+                    // Es una URL, proceder como antes
+                    console.log(`[DEBUG] URL detectada: ${input}`);
+                    await processYoutubeUrl(input, message, voiceChannel, statusMessage);
+                } else {
+                    // Es un término de búsqueda, usar play-dl para buscar (más rápido)
+                    console.log(`[DEBUG] Término de búsqueda detectado: ${input}`);
+                    statusMessage.edit('🔍 Buscando videos en YouTube...');
                     
                     try {
-                        // Crear una conexión al canal de voz
-                        console.log(`[DEBUG] Conectando al canal de voz ${voiceChannel.id}`);
-                        const connection = joinVoiceChannel({
-                            channelId: voiceChannel.id,
-                            guildId: guildId,
-                            adapterCreator: message.guild.voiceAdapterCreator,
-                        });
+                        // Usar play-dl para búsqueda rápida
+                        const searchResults = await play.search(input, { limit: 3, source: { youtube: "video" } })
+                            .catch(error => {
+                                console.error('[DEBUG] Error en búsqueda con play-dl:', error);
+                                return null;
+                            });
                         
-                        // Establecer manejadores de eventos para la conexión
-                        connection.on(VoiceConnectionStatus.Ready, () => {
-                            console.log('[DEBUG] Conexión lista');
-                        });
-                        
-                        connection.on(VoiceConnectionStatus.Disconnected, async () => {
-                            console.log('[DEBUG] Desconectado del canal de voz');
+                        if (!searchResults || searchResults.length === 0) {
+                            console.log('[DEBUG] No se encontraron resultados con play-dl, intentando con youtube-dl');
+                            
+                            // Fallback a youtube-dl si play-dl falla
                             try {
-                                queues.delete(guildId);
-                            } catch (err) {
-                                console.error('[DEBUG] Error al limpiar la cola:', err);
+                                const ytdlResults = await youtubedl(`ytsearch3:${input}`, {
+                                    dumpSingleJson: true,
+                                    noWarnings: true,
+                                    noCallHome: true,
+                                    preferFreeFormats: true,
+                                    youtubeSkipDashManifest: true
+                                });
+                                
+                                if (!ytdlResults || !ytdlResults.entries || ytdlResults.entries.length === 0) {
+                                    return statusMessage.edit('❌ No se encontraron resultados para tu búsqueda.');
+                                }
+                                
+                                const videos = ytdlResults.entries;
+                                
+                                // Crear mensaje con los resultados
+                                const resultsEmbed = new EmbedBuilder()
+                                    .setColor('#0099ff')
+                                    .setTitle('🔍 Resultados de búsqueda')
+                                    .setDescription('Escribe el número (1-3) del video que quieres reproducir, o X para cancelar')
+                                    .addFields(
+                                        videos.map((video, index) => {
+                                            const duration = video.duration ? formatTime(video.duration) : 'Desconocida';
+                                            return {
+                                                name: `${index + 1}. ${video.title}`,
+                                                value: `Duración: ${duration} | Canal: ${video.channel || video.uploader}`
+                                            };
+                                        })
+                                    )
+                                    .setFooter({ text: 'Esta selección expirará en 30 segundos' });
+                                
+                                await statusMessage.edit({ content: null, embeds: [resultsEmbed] });
+                                
+                                const filter = m => (m.author.id === message.author.id) && 
+                                                   (m.content === '1' || m.content === '2' || m.content === '3' || m.content.toLowerCase() === 'x');
+                                
+                                const collected = await message.channel.awaitMessages({ filter, max: 1, time: 30000, errors: ['time'] });
+                                const selectedMsg = collected.first();
+                                
+                                if (selectedMsg) {
+                                    try {
+                                        await selectedMsg.delete();
+                                    } catch (err) {
+                                        console.log('[DEBUG] No se pudo eliminar el mensaje de selección');
+                                    }
+                                    
+                                    if (selectedMsg.content.toLowerCase() === 'x') {
+                                        return statusMessage.edit('🛑 Búsqueda cancelada.');
+                                    }
+                                    
+                                    const selectedIndex = parseInt(selectedMsg.content) - 1;
+                                    const selectedVideo = videos[selectedIndex];
+                                    
+                                    if (!selectedVideo) {
+                                        return statusMessage.edit('❌ Selección inválida.');
+                                    }
+                                    
+                                    statusMessage.edit('🔄 Procesando video seleccionado...');
+                                    await processYoutubeUrl(selectedVideo.webpage_url, message, voiceChannel, statusMessage);
+                                } else {
+                                    return statusMessage.edit('⌛ Tiempo de selección expirado.');
+                                }
+                            } catch (ytdlError) {
+                                console.error('[DEBUG] Error con youtube-dl fallback:', ytdlError);
+                                return statusMessage.edit('❌ Error al buscar videos. Por favor, inténtalo con una URL directa.');
                             }
-                        });
+                            return;
+                        }
                         
-                        queueConstruct.connection = connection;
+                        // Formatear resultados
+                        const resultsEmbed = new EmbedBuilder()
+                            .setColor('#0099ff')
+                            .setTitle('🔍 Resultados de búsqueda')
+                            .setDescription('Escribe el número (1-3) del video que quieres reproducir, o X para cancelar')
+                            .addFields(
+                                searchResults.map((video, index) => {
+                                    const duration = video.durationInSec ? formatTime(video.durationInSec) : 'Desconocida';
+                                    return {
+                                        name: `${index + 1}. ${video.title}`,
+                                        value: `Duración: ${duration} | Canal: ${video.channel?.name || 'Desconocido'}`
+                                    };
+                                })
+                            )
+                            .setFooter({ text: 'Esta selección expirará en 30 segundos' });
                         
-                        // Comenzar a reproducir
-                        statusMessage.edit(`✅ **${song.title}** ha sido añadida a la cola.`);
-                        await playNext(guildId, message);
+                        await statusMessage.edit({ content: null, embeds: [resultsEmbed] });
                         
-                    } catch (err) {
-                        console.error('[DEBUG] Error al conectar:', err);
-                        queues.delete(guildId);
-                        statusMessage.edit('❌ Error al conectar al canal de voz.');
-                        return;
+                        // Esperar por la selección del usuario (mensajes en lugar de reacciones - más rápido)
+                        const filter = m => (m.author.id === message.author.id) && 
+                                          (m.content === '1' || m.content === '2' || m.content === '3' || m.content.toLowerCase() === 'x');
+                        
+                        const collected = await message.channel.awaitMessages({ filter, max: 1, time: 30000, errors: ['time'] });
+                        const selectedMsg = collected.first();
+                        
+                        if (selectedMsg) {
+                            try {
+                                await selectedMsg.delete();
+                            } catch (err) {
+                                console.log('[DEBUG] No se pudo eliminar el mensaje de selección');
+                            }
+                            
+                            if (selectedMsg.content.toLowerCase() === 'x') {
+                                return statusMessage.edit('🛑 Búsqueda cancelada.');
+                            }
+                            
+                            const selectedIndex = parseInt(selectedMsg.content) - 1;
+                            const selectedVideo = searchResults[selectedIndex];
+                            
+                            if (!selectedVideo) {
+                                return statusMessage.edit('❌ Selección inválida.');
+                            }
+                            
+                            statusMessage.edit('🔄 Procesando video seleccionado...');
+                            await processYoutubeUrl(selectedVideo.url, message, voiceChannel, statusMessage);
+                        } else {
+                            return statusMessage.edit('⌛ Tiempo de selección expirado.');
+                        }
+                    } catch (error) {
+                        console.error('[DEBUG] Error en búsqueda:', error);
+                        return statusMessage.edit('❌ Error al buscar videos. Intenta con otra búsqueda o una URL directa.');
                     }
-                } else {
-                    // Ya existe una cola, solo agregar la canción
-                    serverQueue.songs.push(song);
-                    console.log(`[DEBUG] Canción añadida a la cola existente: ${song.title}`);
-                    
-                    const embed = new EmbedBuilder()
-                        .setColor('#0099ff')
-                        .setTitle('🎵 Añadida a la cola')
-                        .setDescription(`[${song.title}](${song.url})`)
-                        .setFooter({ text: `Solicitado por ${message.author.username}` });
-                        
-                    if (song.thumbnail) {
-                        embed.setThumbnail(song.thumbnail);
-                    }
-                    
-                    if (song.duration) {
-                        const minutes = Math.floor(song.duration / 60);
-                        const seconds = song.duration % 60;
-                        embed.addFields({ name: 'Duración', value: `${minutes}:${seconds.toString().padStart(2, '0')}` });
-                    }
-                    
-                    statusMessage.edit({ content: null, embeds: [embed] });
                 }
-                
             } catch (error) {
-                console.error('[DEBUG] Error al obtener info del video:', error);
-                statusMessage.edit('❌ Error al obtener información del video. Verifica la URL.');
+                console.error('[DEBUG] Error al procesar input:', error);
+                statusMessage.edit('❌ Error al procesar. Verifica la URL o intenta con otro término de búsqueda.');
             }
             break;
             
@@ -768,7 +935,7 @@ client.on('messageCreate', async (message) => {
                 .setTitle('🤖 Comandos del Bot')
                 .setDescription('Lista de comandos disponibles:')
                 .addFields(
-                    { name: '!play [URL]', value: 'Reproduce una canción de YouTube' },
+                    { name: '!play [URL o búsqueda]', value: 'Reproduce una canción de YouTube. Si pones un término de búsqueda, te mostrará opciones para elegir.' },
                     { name: '!skip', value: 'Salta a la siguiente canción en la cola' },
                     { name: '!stop', value: 'Detiene la reproducción y limpia la cola' },
                     { name: '!pause', value: 'Pausa la reproducción actual' },

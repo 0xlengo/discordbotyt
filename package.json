@@ -18,7 +18,7 @@
     "ffmpeg": "^0.0.4",
     "ffmpeg-static": "^5.2.0",
     "libsodium-wrappers": "^0.7.15",
-    "play-dl": "^1.9.4",
+    "play-dl": "^1.9.7",
     "sodium-native": "^4.3.3",
     "youtube-dl-exec": "^2.5.8",
     "youtube-sr": "^4.3.10"
