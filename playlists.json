@@ -12,17 +12,8 @@
       }
     ]
   },
-  "desstro": {
+  "lesi": {
     "creator": "0xlengo",
-    "songs": [
-      {
-        "url": "https://www.youtube.com/watch?v=IFxv42xPPXU",
-        "title": "Mambrú - A Veces (Official Video)"
-      },
-      {
-        "url": "https://www.youtube.com/watch?v=Zgxxx_yDveg",
-        "title": "PLUMA PLUMA GAY | Los Morancos (Parodia)"
-      }
-    ]
+    "songs": []
   }
 }

@@ -3,10 +3,43 @@ const { joinVoiceChannel, createAudioPlayer, createAudioResource, StreamType, Au
 const { spawn } = require('child_process');
 const youtubedl = require('youtube-dl-exec');
 const play = require('play-dl');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 // Cola de reproducción global (por servidor)
 const queues = new Map();
+
+// Ruta al archivo de playlists
+const playlistsPath = path.join(__dirname, 'playlists.json');
+
+// Función para cargar las playlists
+function loadPlaylists() {
+    try {
+        if (fs.existsSync(playlistsPath)) {
+            const data = fs.readFileSync(playlistsPath, 'utf8');
+            return JSON.parse(data);
+        }
+        return {};
+    } catch (error) {
+        console.error('[DEBUG] Error al cargar playlists:', error);
+        return {};
+    }
+}
+
+// Función para guardar las playlists
+function savePlaylists(playlists) {
+    try {
+        fs.writeFileSync(playlistsPath, JSON.stringify(playlists, null, 2), 'utf8');
+        return true;
+    } catch (error) {
+        console.error('[DEBUG] Error al guardar playlists:', error);
+        return false;
+    }
+}
+
+// Inicializar playlists
+let playlists = loadPlaylists();
 
 const client = new Client({
     intents: [
@@ -929,6 +962,286 @@ client.on('messageCreate', async (message) => {
             }
             break;
             
+        case 'playlist':
+        case 'pl':
+            if (!args.length) {
+                return message.reply('Por favor, especifica una acción: create, add, remove, list, play.');
+            }
+            
+            const playlistAction = args.shift().toLowerCase();
+            
+            switch (playlistAction) {
+                case 'create':
+                    // Crear una nueva playlist
+                    if (!args.length) {
+                        return message.reply('Por favor, proporciona un nombre para la playlist.');
+                    }
+                    
+                    const playlistName = args.join(' ').toLowerCase();
+                    
+                    if (playlists[playlistName]) {
+                        return message.reply(`❌ Ya existe una playlist llamada "${playlistName}".`);
+                    }
+                    
+                    playlists[playlistName] = {
+                        creator: message.author.username,
+                        songs: []
+                    };
+                    
+                    if (savePlaylists(playlists)) {
+                        message.reply(`✅ Playlist "${playlistName}" creada correctamente.`);
+                    } else {
+                        message.reply('❌ Error al guardar la playlist. Inténtalo de nuevo.');
+                    }
+                    break;
+                    
+                case 'add':
+                    // Añadir canción a una playlist
+                    if (args.length < 2) {
+                        return message.reply('Uso: !playlist add [nombre_playlist] [URL o búsqueda]');
+                    }
+                    
+                    const addToPlaylist = args.shift().toLowerCase();
+                    
+                    if (!playlists[addToPlaylist]) {
+                        return message.reply(`❌ No existe una playlist llamada "${addToPlaylist}".`);
+                    }
+                    
+                    const songToAdd = args.join(' ');
+                    const isUrl = songToAdd.match(/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/);
+                    
+                    const statusMessage = await message.reply('🔄 Procesando canción para añadir a la playlist...');
+                    
+                    try {
+                        if (isUrl) {
+                            // Es una URL directa
+                            const videoInfo = await youtubedl(songToAdd, {
+                                dumpSingleJson: true,
+                                skipDownload: true,
+                                noWarnings: true,
+                                noCallHome: true,
+                                preferFreeFormats: true,
+                            });
+                            
+                            playlists[addToPlaylist].songs.push({
+                                url: videoInfo.webpage_url || songToAdd,
+                                title: videoInfo.title || 'Canción desconocida'
+                            });
+                            
+                            if (savePlaylists(playlists)) {
+                                statusMessage.edit(`✅ Añadida "${videoInfo.title}" a la playlist "${addToPlaylist}".`);
+                            } else {
+                                statusMessage.edit('❌ Error al guardar la playlist. Inténtalo de nuevo.');
+                            }
+                        } else {
+                            // Es una búsqueda
+                            const searchResults = await play.search(songToAdd, { limit: 1, source: { youtube: "video" } })
+                                .catch(error => {
+                                    console.error('[DEBUG] Error en búsqueda con play-dl:', error);
+                                    return null;
+                                });
+                                
+                            if (!searchResults || searchResults.length === 0) {
+                                return statusMessage.edit('❌ No se encontraron resultados para tu búsqueda.');
+                            }
+                            
+                            const video = searchResults[0];
+                            
+                            playlists[addToPlaylist].songs.push({
+                                url: video.url,
+                                title: video.title
+                            });
+                            
+                            if (savePlaylists(playlists)) {
+                                statusMessage.edit(`✅ Añadida "${video.title}" a la playlist "${addToPlaylist}".`);
+                            } else {
+                                statusMessage.edit('❌ Error al guardar la playlist. Inténtalo de nuevo.');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('[DEBUG] Error al añadir a playlist:', error);
+                        statusMessage.edit('❌ Error al procesar la canción. Verifica la URL o intenta con otra búsqueda.');
+                    }
+                    break;
+                    
+                case 'remove':
+                    // Eliminar canción de una playlist
+                    if (args.length < 2) {
+                        return message.reply('Uso: !playlist remove [nombre_playlist] [número_de_canción]');
+                    }
+                    
+                    const removeFromPlaylist = args.shift().toLowerCase();
+                    
+                    if (!playlists[removeFromPlaylist]) {
+                        return message.reply(`❌ No existe una playlist llamada "${removeFromPlaylist}".`);
+                    }
+                    
+                    const songIndex = parseInt(args[0]) - 1;
+                    
+                    if (isNaN(songIndex) || songIndex < 0 || songIndex >= playlists[removeFromPlaylist].songs.length) {
+                        return message.reply(`❌ Número de canción inválido. La playlist tiene ${playlists[removeFromPlaylist].songs.length} canciones.`);
+                    }
+                    
+                    const removedSong = playlists[removeFromPlaylist].songs.splice(songIndex, 1)[0];
+                    
+                    if (savePlaylists(playlists)) {
+                        message.reply(`✅ Eliminada "${removedSong.title}" de la playlist "${removeFromPlaylist}".`);
+                    } else {
+                        message.reply('❌ Error al guardar los cambios. Inténtalo de nuevo.');
+                    }
+                    break;
+                    
+                case 'list':
+                    // Listar todas las playlists o el contenido de una playlist
+                    if (!args.length) {
+                        // Listar todas las playlists
+                        const playlistKeys = Object.keys(playlists);
+                        
+                        if (playlistKeys.length === 0) {
+                            return message.reply('❌ No hay playlists guardadas.');
+                        }
+                        
+                        const playlistsEmbed = new EmbedBuilder()
+                            .setColor('#0099ff')
+                            .setTitle('📋 Playlists Disponibles')
+                            .setDescription('Usa `!playlist list [nombre]` para ver el contenido de una playlist específica.')
+                            .addFields(
+                                playlistKeys.map(name => {
+                                    return {
+                                        name: `${name} (${playlists[name].songs.length} canciones)`,
+                                        value: `Creada por: ${playlists[name].creator}`
+                                    };
+                                })
+                            );
+                            
+                        message.channel.send({ embeds: [playlistsEmbed] });
+                    } else {
+                        // Listar contenido de una playlist específica
+                        const playlistToShow = args.join(' ').toLowerCase();
+                        
+                        if (!playlists[playlistToShow]) {
+                            return message.reply(`❌ No existe una playlist llamada "${playlistToShow}".`);
+                        }
+                        
+                        const playlist = playlists[playlistToShow];
+                        
+                        if (playlist.songs.length === 0) {
+                            return message.reply(`La playlist "${playlistToShow}" está vacía.`);
+                        }
+                        
+                        const songsEmbed = new EmbedBuilder()
+                            .setColor('#0099ff')
+                            .setTitle(`🎵 Playlist: ${playlistToShow}`)
+                            .setDescription(`Creada por: ${playlist.creator} | ${playlist.songs.length} canciones`)
+                            .addFields(
+                                playlist.songs.map((song, index) => {
+                                    return {
+                                        name: `${index + 1}. ${song.title}`,
+                                        value: `[Link](${song.url})`
+                                    };
+                                })
+                            );
+                            
+                        message.channel.send({ embeds: [songsEmbed] });
+                    }
+                    break;
+                    
+                case 'play':
+                    // Reproducir una playlist
+                    if (!args.length) {
+                        return message.reply('Por favor, especifica el nombre de la playlist a reproducir.');
+                    }
+                    
+                    const voiceChannel = message.member.voice.channel;
+                    if (!voiceChannel) {
+                        return message.reply('¡Necesitas unirte a un canal de voz primero!');
+                    }
+                    
+                    const playlistToPlay = args.join(' ').toLowerCase();
+                    
+                    if (!playlists[playlistToPlay]) {
+                        return message.reply(`❌ No existe una playlist llamada "${playlistToPlay}".`);
+                    }
+                    
+                    const playlistSongs = playlists[playlistToPlay].songs;
+                    
+                    if (playlistSongs.length === 0) {
+                        return message.reply(`❌ La playlist "${playlistToPlay}" está vacía.`);
+                    }
+                    
+                    const statusMsg = await message.reply(`🔄 Cargando playlist "${playlistToPlay}"...`);
+                    
+                    // Si es la primera canción, procesarla directamente
+                    await processYoutubeUrl(playlistSongs[0].url, message, voiceChannel, statusMsg);
+                    
+                    // Añadir el resto de canciones a la cola
+                    if (playlistSongs.length > 1) {
+                        for (let i = 1; i < playlistSongs.length; i++) {
+                            try {
+                                const videoInfo = await youtubedl(playlistSongs[i].url, {
+                                    dumpSingleJson: true,
+                                    skipDownload: true,
+                                    noWarnings: true,
+                                    noCallHome: true,
+                                    preferFreeFormats: true,
+                                });
+                                
+                                const song = {
+                                    title: videoInfo.title || playlistSongs[i].title,
+                                    url: videoInfo.webpage_url || playlistSongs[i].url,
+                                    duration: videoInfo.duration,
+                                    thumbnail: videoInfo.thumbnail,
+                                    requestedBy: message.author.username
+                                };
+                                
+                                serverQueue = queues.get(guildId); // Actualizar la referencia a la cola
+                                
+                                if (serverQueue) {
+                                    serverQueue.songs.push(song);
+                                    console.log(`[DEBUG] Canción de playlist añadida a la cola: ${song.title}`);
+                                }
+                            } catch (error) {
+                                console.error(`[DEBUG] Error al cargar canción de playlist: ${playlistSongs[i].url}`, error);
+                            }
+                        }
+                        
+                        message.channel.send(`✅ Se añadieron ${playlistSongs.length - 1} canciones más de la playlist "${playlistToPlay}" a la cola.`);
+                    }
+                    break;
+                    
+                case 'delete':
+                    // Eliminar una playlist completa
+                    if (!args.length) {
+                        return message.reply('Por favor, especifica el nombre de la playlist a eliminar.');
+                    }
+                    
+                    const playlistToDelete = args.join(' ').toLowerCase();
+                    
+                    if (!playlists[playlistToDelete]) {
+                        return message.reply(`❌ No existe una playlist llamada "${playlistToDelete}".`);
+                    }
+                    
+                    // Verificar que el usuario sea el creador o tenga permisos de administrador
+                    if (playlists[playlistToDelete].creator !== message.author.username && 
+                        !message.member.permissions.has('ADMINISTRATOR')) {
+                        return message.reply(`❌ Solo el creador o un administrador puede eliminar esta playlist.`);
+                    }
+                    
+                    delete playlists[playlistToDelete];
+                    
+                    if (savePlaylists(playlists)) {
+                        message.reply(`✅ Playlist "${playlistToDelete}" eliminada correctamente.`);
+                    } else {
+                        message.reply('❌ Error al guardar los cambios. Inténtalo de nuevo.');
+                    }
+                    break;
+                    
+                default:
+                    message.reply('Acción no válida. Usa: create, add, remove, list, play, delete.');
+                    break;
+            }
+            break;
+            
         case 'help':
             const helpEmbed = new EmbedBuilder()
                 .setColor('#0099ff')
@@ -950,6 +1263,13 @@ client.on('messageCreate', async (message) => {
                     { name: '!shuffle', value: 'Mezcla las canciones en la cola' },
                     { name: '!forward [segundos]', value: 'Avanza la canción actual (por defecto 10s)' },
                     { name: '!rewind [segundos]', value: 'Retrocede la canción actual (por defecto 10s)' },
+                    { name: '!playlist create [nombre]', value: 'Crea una nueva playlist' },
+                    { name: '!playlist add [nombre] [URL/búsqueda]', value: 'Añade una canción a la playlist' },
+                    { name: '!playlist remove [nombre] [número]', value: 'Elimina una canción de la playlist' },
+                    { name: '!playlist list', value: 'Muestra todas las playlists disponibles' },
+                    { name: '!playlist list [nombre]', value: 'Muestra las canciones de una playlist' },
+                    { name: '!playlist play [nombre]', value: 'Reproduce una playlist' },
+                    { name: '!playlist delete [nombre]', value: 'Elimina una playlist' },
                     { name: '!help', value: 'Muestra este mensaje de ayuda' }
                 );
                 
