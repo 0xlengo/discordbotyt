@@ -723,7 +723,7 @@ client.on('messageCreate', async (message) => {
             
         case 'queue':
             if (!serverQueue || serverQueue.songs.length === 0) {
-                return message.reply('¡No hay canciones en la cola!');
+                return message.reply('¡No tengo nada en la cola!');
             }
             
             const currentSong = serverQueue.songs[0];
@@ -808,7 +808,7 @@ client.on('messageCreate', async (message) => {
             const currentlyPlaying = serverQueue.songs[0];
             serverQueue.songs = [currentlyPlaying];
             
-            message.reply('🧹 Cola limpiada. Solo se conserva la canción actual.');
+            message.reply('🧹 Cola limpita. Solo se conserva la canción actual.');
             break;
             
         case 'shuffle':
@@ -833,7 +833,7 @@ client.on('messageCreate', async (message) => {
             // Reconstruir la cola
             serverQueue.songs = [current, ...queue];
             
-            message.reply('🔀 Cola mezclada.');
+            message.reply('🔀 Cola sucia.');
             break;
             
         case 'forward':
