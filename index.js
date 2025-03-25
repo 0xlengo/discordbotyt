@@ -34,6 +34,11 @@ const ytdlOptions = {
     noCheckCertificates: true
 };
 
+// Añadir cookies si están disponibles en las variables de entorno
+if (process.env.YOUTUBE_COOKIES) {
+    ytdlOptions.cookies = process.env.YOUTUBE_COOKIES;
+}
+
 // Cola de reproducción global (por servidor)
 const queues = new Map();
 
