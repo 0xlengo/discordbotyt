@@ -13,6 +13,27 @@ const youtube = google.youtube({
     auth: process.env.YOUTUBE_API_KEY
 });
 
+// Opciones globales para youtube-dl
+const ytdlOptions = {
+    format: 'bestaudio',
+    noWarnings: true,
+    noCallHome: true,
+    preferFreeFormats: true,
+    youtubeSkipDashManifest: true,
+    referer: 'https://www.youtube.com',
+    geoBypass: true,
+    geoBypassCountry: 'US',
+    addHeader: [
+        'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language:en-US,en;q=0.5',
+        'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    ],
+    socketTimeout: 10000,
+    extractorRetries: 'infinite',
+    forceIpv4: true,
+    noCheckCertificates: true
+};
+
 // Cola de reproducción global (por servidor)
 const queues = new Map();
 
@@ -152,10 +173,8 @@ async function playNext(guildId, message) {
         // Usar yt-dlp solo para obtener la URL del stream
         console.log('[DEBUG] Obteniendo URL del stream');
         const output = await youtubedl(currentSong.url, {
-            dumpSingleJson: true,
-            format: 'bestaudio',
-            noWarnings: true,
-            noCallHome: true
+            ...ytdlOptions,
+            dumpSingleJson: true
         });
 
         if (!output || !output.url) {
@@ -188,9 +207,7 @@ async function playNext(guildId, message) {
         resource.volume.setVolume(serverQueue.volume / 10);
         
         serverQueue.currentResource = resource;
-        serverQueue.currentFfmpeg = ffmpeg;
         serverQueue.currentStartTime = Date.now();
-        serverQueue.audioUrl = output.url;
         
         if (!serverQueue.player) {
             console.log('[DEBUG] Creando nuevo reproductor de audio');
@@ -351,7 +368,6 @@ async function processYoutubeUrl(url, message, voiceChannel, statusMessage) {
                 loop: false,
                 repeat: false,
                 currentResource: null,
-                currentFfmpeg: null,
                 currentStartTime: null,
                 audioUrl: null,
                 processing: false
@@ -987,16 +1003,10 @@ client.on('messageCreate', async (message) => {
                     try {
                         if (isUrl) {
                             // Es una URL directa
-                            const videoInfo = await youtubedl(songToAdd, {
-                                dumpSingleJson: true,
-                                skipDownload: true,
-                                noWarnings: true,
-                                noCallHome: true,
-                                preferFreeFormats: true
-                            });
+                            const videoInfo = await play.video_info(songToAdd);
                             
                             playlists[addToPlaylist].songs.push({
-                                url: videoInfo.webpage_url || songToAdd,
+                                url: videoInfo.url,
                                 title: videoInfo.title || 'Canción desconocida'
                             });
                             
@@ -1146,17 +1156,11 @@ client.on('messageCreate', async (message) => {
                     if (playlistSongs.length > 1) {
                         for (let i = 1; i < playlistSongs.length; i++) {
                             try {
-                                const videoInfo = await youtubedl(playlistSongs[i].url, {
-                                    dumpSingleJson: true,
-                                    skipDownload: true,
-                                    noWarnings: true,
-                                    noCallHome: true,
-                                    preferFreeFormats: true
-                                });
+                                const videoInfo = await play.video_info(playlistSongs[i].url);
                                 
                                 const song = {
                                     title: videoInfo.title || playlistSongs[i].title,
-                                    url: videoInfo.webpage_url || playlistSongs[i].url,
+                                    url: videoInfo.url,
                                     duration: videoInfo.duration,
                                     thumbnail: videoInfo.thumbnail,
                                     requestedBy: message.author.username
