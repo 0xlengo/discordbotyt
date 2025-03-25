@@ -1,0 +1,249 @@
+{
+  "rock": {
+    "creator": "ClassicMTV",
+    "songs": [
+      {
+        "url": "https://www.youtube.com/watch?v=vabnZ9-ex7o",
+        "title": "Nirvana - Smells Like Teen Spirit"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=6Ejga4kJUts",
+        "title": "The Cranberries - Zombie"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=xwtdhWltSIg",
+        "title": "Red Hot Chili Peppers - Under The Bridge"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=SC4xMk98Pdc",
+        "title": "Guns N' Roses - November Rain"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=etp8L9pbqeM",
+        "title": "Pearl Jam - Black"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=n6P0SitRwy8",
+        "title": "Soundgarden - Black Hole Sun"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=3mbBbFH9fAg",
+        "title": "Alice In Chains - Would?"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=pkcJEvMcnEg",
+        "title": "Stone Temple Pilots - Plush"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=hTWKbfoikeg",
+        "title": "Nirvana - Come As You Are"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=3YxaaGgTQYM",
+        "title": "Evanescence - Bring Me To Life"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=1lyu1KKwC74",
+        "title": "The Verve - Bitter Sweet Symphony"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=LatorN4P9aA",
+        "title": "Radiohead - Creep"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=8SbUC-UaAxE",
+        "title": "Guns N' Roses - Sweet Child O' Mine"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=UrIiLvg58SY",
+        "title": "Rage Against The Machine - Killing In The Name"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=I-h4A7bF8wQ",
+        "title": "Green Day - Basket Case"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=Aiay8I5IPB8",
+        "title": "Pearl Jam - Jeremy"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=aDaOgu2CQtI",
+        "title": "Pearl Jam - Do the Evolution"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=PTFwQP86BRs",
+        "title": "Nine Inch Nails - Hurt"
+      }
+    ]
+  },
+  "pop": {
+    "creator": "ClassicMTV",
+    "songs": [
+      {
+        "url": "https://www.youtube.com/watch?v=XF2ayWcJfxo",
+        "title": "Britney Spears - ...Baby One More Time"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=6Ux6SlOE9Qk",
+        "title": "Backstreet Boys - I Want It That Way"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "title": "Rick Astley - Never Gonna Give You Up"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=gJLIiF15wjQ",
+        "title": "Spice Girls - Wannabe"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=qeMFqkcPYcg",
+        "title": "Eurythmics - Sweet Dreams (Are Made Of This)"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=8WEtxJ4-sh4",
+        "title": "TLC - Waterfalls"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=qq09UkPRdFY",
+        "title": "Mariah Carey - Fantasy"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=gJLIiF15wjQ",
+        "title": "Cher - Believe"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=6vYnas6q3Sg",
+        "title": "Semisonic - Closing Time"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=llyiQ4I-mcQ",
+        "title": "Haddaway - What Is Love"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=Ps2Jc28tQrw",
+        "title": "Christina Aguilera - Genie In A Bottle"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=NI6aOFI7hms",
+        "title": "Mariah Carey - Without You"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=C-u5WLJ9Yk4",
+        "title": "Britney Spears - Oops!...I Did It Again"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=iqu132vTl5Y",
+        "title": "Ace of Base - The Sign"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=gwUX4cSwrRk",
+        "title": "Celine Dion - My Heart Will Go On"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=FTQbiNvZqaY",
+        "title": "Toto - Africa"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=NHozn0YXAeE",
+        "title": "Hanson - MMMBop"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=AMD2TwRvuoU",
+        "title": "Seal - Kiss from a Rose"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=3JWTaaS7LdU",
+        "title": "Whitney Houston - I Will Always Love You"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=ZyhrYis509A",
+        "title": "Aqua - Barbie Girl"
+      }
+    ]
+  },
+  "hiphop": {
+    "creator": "ClassicMTV",
+    "songs": [
+      {
+        "url": "https://www.youtube.com/watch?v=_qkP8SvHvaU",
+        "title": "The Notorious B.I.G. - Juicy"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=fPO76Jlnz6c",
+        "title": "Coolio - Gangsta's Paradise"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=_CL6n0FJZpk",
+        "title": "Dr. Dre ft. Snoop Dogg - Still D.R.E."
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=5wBTdfAkqGU",
+        "title": "Tupac - California Love"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=h4UqMyldS7Q",
+        "title": "Ice Cube - It Was A Good Day"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=PBwAxmrE194",
+        "title": "Wu-Tang Clan - C.R.E.A.M."
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=oLoehwYshPc",
+        "title": "Fugees - Killing Me Softly With His Song"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=1plPyJdXKIY",
+        "title": "Warren G ft. Nate Dogg - Regulate"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=LQ488QrqGE4",
+        "title": "Salt-N-Pepa - Shoop"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=4qqffbYW8c4",
+        "title": "Busta Rhymes - Woo Hah!! Got You All in Check"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=DI3yXg-sX5c",
+        "title": "Snoop Dogg - Gin & Juice"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=bA1PAkKD3Q4",
+        "title": "The Fugees - Ready or Not"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=phaJXp_zMYM",
+        "title": "Notorious B.I.G. - Big Poppa"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=FrLequ6dUdM",
+        "title": "TLC - No Scrubs"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=hHcyJPTTn9w",
+        "title": "Missy Elliott - The Rain (Supa Dupa Fly)"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=05PCmqjIeNE",
+        "title": "2Pac - All Eyez On Me"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=8N-qO3sPMjc",
+        "title": "Lauryn Hill - Doo Wop (That Thing)"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=cnCunDK0tSw",
+        "title": "Ol' Dirty Bastard - Got Your Money"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=eXvBjCO19QY",
+        "title": "2Pac - Changes"
+      },
+      {
+        "url": "https://www.youtube.com/watch?v=NW55FRXlPEs",
+        "title": "Nas - If I Ruled the World (Imagine That)"
+      }
+    ]
+  }
+}

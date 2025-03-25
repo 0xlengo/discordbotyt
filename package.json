@@ -1,0 +1,26 @@
+{
+  "name": "discordbotyt",
+  "version": "1.0.0",
+  "description": "Bot de Discord para reproducir música de YouTube",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@discordjs/opus": "^0.10.0",
+    "@discordjs/voice": "^0.16.1",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5",
+    "ffmpeg": "^0.0.4",
+    "ffmpeg-static": "^5.2.0",
+    "googleapis": "^148.0.0",
+    "libsodium-wrappers": "^0.7.15",
+    "sodium-native": "^4.3.3",
+    "youtube-dl-exec": "^2.4.6",
+    "youtube-sr": "^4.3.10"
+  }
+}
