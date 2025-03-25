@@ -28,15 +28,19 @@ async function createTempCookieFile(cookies) {
             cookieContent = `# Netscape HTTP Cookie File\n# https://curl.haxx.se/rfc/cookie_spec.html\n# This is a generated file!\n\n${cookies}`;
         }
         
-        // Escribir cookies al archivo
+        // Escribir cookies al archivo de forma síncrona
         fs.writeFileSync(cookieFile, cookieContent, { mode: 0o600 });
-        console.log('[DEBUG] Archivo de cookies creado con éxito');
         
-        // Verificar que el archivo existe y tiene contenido
-        const fileContent = fs.readFileSync(cookieFile, 'utf8');
-        console.log('[DEBUG] Contenido del archivo de cookies:', fileContent.substring(0, 100) + '...');
-        
-        return cookieFile;
+        // Verificar que el archivo existe y tiene el contenido correcto
+        if (fs.existsSync(cookieFile)) {
+            const fileContent = fs.readFileSync(cookieFile, 'utf8');
+            console.log('[DEBUG] Archivo de cookies creado con éxito');
+            console.log('[DEBUG] Contenido del archivo de cookies:', fileContent.substring(0, 100) + '...');
+            return cookieFile;
+        } else {
+            console.error('[DEBUG] Error: El archivo de cookies no existe después de crearlo');
+            return null;
+        }
     } catch (error) {
         console.error('[DEBUG] Error al crear archivo de cookies:', error);
         return null;
@@ -68,10 +72,12 @@ const ytdlOptions = {
 let cookieFile = null;
 if (process.env.YOUTUBE_COOKIES) {
     console.log('[DEBUG] Cookies encontradas en variables de entorno');
-    cookieFile = createTempCookieFile(process.env.YOUTUBE_COOKIES);
+    cookieFile = await createTempCookieFile(process.env.YOUTUBE_COOKIES);
     if (cookieFile) {
+        console.log('[DEBUG] Cookies configuradas correctamente en:', cookieFile);
         ytdlOptions.cookies = cookieFile;
-        console.log('[DEBUG] Cookies configuradas en ytdlOptions:', cookieFile);
+    } else {
+        console.error('[DEBUG] No se pudieron configurar las cookies');
     }
 }
 
@@ -218,7 +224,14 @@ async function playNext(guildId, message) {
             console.log('[DEBUG] Usando archivo de cookies:', cookieFile);
             options.cookies = cookieFile;
         } else {
-            console.log('[DEBUG] No se encontró archivo de cookies válido');
+            console.log('[DEBUG] Recreando archivo de cookies');
+            if (process.env.YOUTUBE_COOKIES) {
+                cookieFile = await createTempCookieFile(process.env.YOUTUBE_COOKIES);
+                if (cookieFile) {
+                    options.cookies = cookieFile;
+                    console.log('[DEBUG] Nuevo archivo de cookies creado:', cookieFile);
+                }
+            }
         }
         
         const output = await youtubedl(currentSong.url, {
