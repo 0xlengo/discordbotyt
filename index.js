@@ -20,6 +20,8 @@ async function createTempCookieFile(cookies) {
         const tempDir = os.tmpdir();
         const cookieFile = path.join(tempDir, 'youtube_cookies.txt');
         
+        console.log('[DEBUG] Creando archivo de cookies en:', cookieFile);
+        
         // Asegurarse de que el contenido comience con el encabezado correcto
         let cookieContent = cookies;
         if (!cookies.startsWith('# Netscape HTTP Cookie File')) {
@@ -27,10 +29,12 @@ async function createTempCookieFile(cookies) {
         }
         
         // Escribir cookies al archivo
-        fs.writeFileSync(cookieFile, cookieContent);
+        fs.writeFileSync(cookieFile, cookieContent, { mode: 0o600 });
+        console.log('[DEBUG] Archivo de cookies creado con éxito');
         
-        // Verificar permisos del archivo
-        fs.chmodSync(cookieFile, '600');
+        // Verificar que el archivo existe y tiene contenido
+        const fileContent = fs.readFileSync(cookieFile, 'utf8');
+        console.log('[DEBUG] Contenido del archivo de cookies:', fileContent.substring(0, 100) + '...');
         
         return cookieFile;
     } catch (error) {
@@ -39,7 +43,7 @@ async function createTempCookieFile(cookies) {
     }
 }
 
-// Opciones globales para youtube-dl
+// Actualizar la configuración de ytdlOptions
 const ytdlOptions = {
     format: 'bestaudio/best',
     noWarnings: true,
@@ -60,11 +64,14 @@ const ytdlOptions = {
     noCheckCertificates: true
 };
 
-// Si hay cookies en las variables de entorno, crear archivo temporal
+// Inicializar cookies al inicio
+let cookieFile = null;
 if (process.env.YOUTUBE_COOKIES) {
-    const cookieFile = createTempCookieFile(process.env.YOUTUBE_COOKIES);
+    console.log('[DEBUG] Cookies encontradas en variables de entorno');
+    cookieFile = createTempCookieFile(process.env.YOUTUBE_COOKIES);
     if (cookieFile) {
         ytdlOptions.cookies = cookieFile;
+        console.log('[DEBUG] Cookies configuradas en ytdlOptions:', cookieFile);
     }
 }
 
@@ -205,8 +212,17 @@ async function playNext(guildId, message) {
     
     try {
         console.log('[DEBUG] Obteniendo URL del stream');
+        const options = { ...ytdlOptions };
+        
+        if (cookieFile && fs.existsSync(cookieFile)) {
+            console.log('[DEBUG] Usando archivo de cookies:', cookieFile);
+            options.cookies = cookieFile;
+        } else {
+            console.log('[DEBUG] No se encontró archivo de cookies válido');
+        }
+        
         const output = await youtubedl(currentSong.url, {
-            ...ytdlOptions,
+            ...options,
             dumpSingleJson: true,
             format: 'bestaudio/best',
             extractAudio: true,
