@@ -5,6 +5,7 @@ const youtubedl = require('youtube-dl-exec');
 const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 require('dotenv').config();
 
 // Configuración de la API de YouTube
@@ -12,6 +13,14 @@ const youtube = google.youtube({
     version: 'v3',
     auth: process.env.YOUTUBE_API_KEY
 });
+
+// Función para crear archivo temporal de cookies
+function createTempCookieFile(cookies) {
+    const tempDir = os.tmpdir();
+    const cookieFile = path.join(tempDir, 'youtube_cookies.txt');
+    fs.writeFileSync(cookieFile, cookies);
+    return cookieFile;
+}
 
 // Opciones globales para youtube-dl
 const ytdlOptions = {
@@ -34,9 +43,10 @@ const ytdlOptions = {
     noCheckCertificates: true
 };
 
-// Añadir cookies si están disponibles en las variables de entorno
+// Si hay cookies en las variables de entorno, crear archivo temporal
 if (process.env.YOUTUBE_COOKIES) {
-    ytdlOptions.cookies = process.env.YOUTUBE_COOKIES;
+    const cookieFile = createTempCookieFile(process.env.YOUTUBE_COOKIES);
+    ytdlOptions.cookies = cookieFile;
 }
 
 // Cola de reproducción global (por servidor)
@@ -175,7 +185,6 @@ async function playNext(guildId, message) {
     console.log(`[DEBUG] Reproduciendo: ${currentSong.title}`);
     
     try {
-        // Usar yt-dlp solo para obtener la URL del stream
         console.log('[DEBUG] Obteniendo URL del stream');
         const output = await youtubedl(currentSong.url, {
             ...ytdlOptions,
@@ -295,6 +304,15 @@ async function playNext(guildId, message) {
     } catch (error) {
         console.error('[DEBUG] Error al reproducir:', error);
         message.channel.send('❌ Error al reproducir esta canción.');
+        
+        // Limpiar archivo de cookies temporal si existe
+        if (ytdlOptions.cookies && fs.existsSync(ytdlOptions.cookies)) {
+            try {
+                fs.unlinkSync(ytdlOptions.cookies);
+            } catch (err) {
+                console.error('[DEBUG] Error al eliminar archivo de cookies temporal:', err);
+            }
+        }
         
         serverQueue.songs.shift();
         playNext(guildId, message);
