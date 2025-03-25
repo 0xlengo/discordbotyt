@@ -70,14 +70,18 @@ const ytdlOptions = {
 
 // Inicializar cookies al inicio
 let cookieFile = null;
-if (process.env.YOUTUBE_COOKIES) {
-    console.log('[DEBUG] Cookies encontradas en variables de entorno');
-    cookieFile = await createTempCookieFile(process.env.YOUTUBE_COOKIES);
-    if (cookieFile) {
-        console.log('[DEBUG] Cookies configuradas correctamente en:', cookieFile);
-        ytdlOptions.cookies = cookieFile;
-    } else {
-        console.error('[DEBUG] No se pudieron configurar las cookies');
+
+// Función para inicializar cookies
+async function initializeCookies() {
+    if (process.env.YOUTUBE_COOKIES) {
+        console.log('[DEBUG] Cookies encontradas en variables de entorno');
+        cookieFile = await createTempCookieFile(process.env.YOUTUBE_COOKIES);
+        if (cookieFile) {
+            console.log('[DEBUG] Cookies configuradas correctamente en:', cookieFile);
+            ytdlOptions.cookies = cookieFile;
+        } else {
+            console.error('[DEBUG] No se pudieron configurar las cookies');
+        }
     }
 }
 
@@ -542,8 +546,9 @@ function convertDuration(duration) {
 }
 
 // Registrar el evento ready una sola vez
-client.once('ready', () => {
+client.once('ready', async () => {
     console.log(`[DEBUG] Bot listo como ${client.user.tag}`);
+    await initializeCookies();
 });
 
 // Registrar el evento messageCreate una sola vez
