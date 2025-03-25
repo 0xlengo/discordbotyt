@@ -14,12 +14,29 @@ const youtube = google.youtube({
     auth: process.env.YOUTUBE_API_KEY
 });
 
-// Función para crear archivo temporal de cookies
-function createTempCookieFile(cookies) {
-    const tempDir = os.tmpdir();
-    const cookieFile = path.join(tempDir, 'youtube_cookies.txt');
-    fs.writeFileSync(cookieFile, cookies);
-    return cookieFile;
+// Función para crear archivo temporal de cookies con verificación
+async function createTempCookieFile(cookies) {
+    try {
+        const tempDir = os.tmpdir();
+        const cookieFile = path.join(tempDir, 'youtube_cookies.txt');
+        
+        // Asegurarse de que el contenido comience con el encabezado correcto
+        let cookieContent = cookies;
+        if (!cookies.startsWith('# Netscape HTTP Cookie File')) {
+            cookieContent = `# Netscape HTTP Cookie File\n# https://curl.haxx.se/rfc/cookie_spec.html\n# This is a generated file!\n\n${cookies}`;
+        }
+        
+        // Escribir cookies al archivo
+        fs.writeFileSync(cookieFile, cookieContent);
+        
+        // Verificar permisos del archivo
+        fs.chmodSync(cookieFile, '600');
+        
+        return cookieFile;
+    } catch (error) {
+        console.error('[DEBUG] Error al crear archivo de cookies:', error);
+        return null;
+    }
 }
 
 // Opciones globales para youtube-dl
@@ -46,7 +63,9 @@ const ytdlOptions = {
 // Si hay cookies en las variables de entorno, crear archivo temporal
 if (process.env.YOUTUBE_COOKIES) {
     const cookieFile = createTempCookieFile(process.env.YOUTUBE_COOKIES);
-    ytdlOptions.cookies = cookieFile;
+    if (cookieFile) {
+        ytdlOptions.cookies = cookieFile;
+    }
 }
 
 // Cola de reproducción global (por servidor)
@@ -1183,21 +1202,26 @@ client.on('messageCreate', async (message) => {
                     if (playlistSongs.length > 1) {
                         for (let i = 1; i < playlistSongs.length; i++) {
                             try {
-                                const videoInfo = await play.video_info(playlistSongs[i].url);
+                                // Obtener información usando la API de YouTube
+                                const videoId = extractVideoId(playlistSongs[i].url);
+                                const videoDetails = await getVideoDetails(videoId);
                                 
-                                const song = {
-                                    title: videoInfo.title || playlistSongs[i].title,
-                                    url: videoInfo.url,
-                                    duration: videoInfo.duration,
-                                    thumbnail: videoInfo.thumbnail,
-                                    requestedBy: message.author.username
-                                };
-                                
-                                serverQueue = queues.get(guildId); // Actualizar la referencia a la cola
-                                
-                                if (serverQueue) {
-                                    serverQueue.songs.push(song);
-                                    console.log(`[DEBUG] Canción de playlist añadida a la cola: ${song.title}`);
+                                if (videoDetails) {
+                                    const song = {
+                                        title: videoDetails.title,
+                                        url: playlistSongs[i].url,
+                                        duration: videoDetails.duration,
+                                        thumbnail: videoDetails.thumbnail,
+                                        requestedBy: message.author.username,
+                                        channel: videoDetails.channel
+                                    };
+                                    
+                                    serverQueue = queues.get(guildId); // Actualizar la referencia a la cola
+                                    
+                                    if (serverQueue) {
+                                        serverQueue.songs.push(song);
+                                        console.log(`[DEBUG] Canción de playlist añadida a la cola: ${song.title}`);
+                                    }
                                 }
                             } catch (error) {
                                 console.error(`[DEBUG] Error al cargar canción de playlist: ${playlistSongs[i].url}`, error);
