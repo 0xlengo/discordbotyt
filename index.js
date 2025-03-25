@@ -24,7 +24,7 @@ function createTempCookieFile(cookies) {
 
 // Opciones globales para youtube-dl
 const ytdlOptions = {
-    format: 'bestaudio',
+    format: 'bestaudio/best',
     noWarnings: true,
     noCallHome: true,
     preferFreeFormats: true,
@@ -37,7 +37,7 @@ const ytdlOptions = {
         'Accept-Language:en-US,en;q=0.5',
         'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     ],
-    socketTimeout: 10000,
+    socketTimeout: '10',
     extractorRetries: 'infinite',
     forceIpv4: true,
     noCheckCertificates: true
@@ -188,7 +188,11 @@ async function playNext(guildId, message) {
         console.log('[DEBUG] Obteniendo URL del stream');
         const output = await youtubedl(currentSong.url, {
             ...ytdlOptions,
-            dumpSingleJson: true
+            dumpSingleJson: true,
+            format: 'bestaudio/best',
+            extractAudio: true,
+            audioFormat: 'mp3',
+            audioQuality: '0'
         });
 
         if (!output || !output.url) {

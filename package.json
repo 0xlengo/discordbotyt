@@ -13,6 +13,7 @@
   "dependencies": {
     "@discordjs/opus": "^0.10.0",
     "@discordjs/voice": "^0.16.1",
+    "@distube/yt-dlp": "^2.0.1",
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.5",
     "ffmpeg": "^0.0.4",
@@ -21,7 +22,7 @@
     "libsodium-wrappers": "^0.7.15",
     "play-dl": "^1.9.7",
     "sodium-native": "^4.3.3",
-    "youtube-dl-exec": "^2.4.6",
+    "youtube-dl-exec": "^3.0.19",
     "youtube-sr": "^4.3.10"
   }
 }
