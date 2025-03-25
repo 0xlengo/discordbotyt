@@ -149,55 +149,22 @@ async function playNext(guildId, message) {
     console.log(`[DEBUG] Reproduciendo: ${currentSong.title}`);
     
     try {
-        console.log('[DEBUG] Obteniendo info del video');
-        
-        // Obtener la URL del stream de audio usando youtube-dl con opciones mejoradas
+        // Usar yt-dlp solo para obtener la URL del stream
+        console.log('[DEBUG] Obteniendo URL del stream');
         const output = await youtubedl(currentSong.url, {
             dumpSingleJson: true,
-            noWarnings: true,
-            noCallHome: true,
             format: 'bestaudio',
-            extractAudio: true,
-            audioFormat: 'mp3',
-            addHeader: [
-                'referer:youtube.com',
-                'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'accept-language:en-US,en;q=0.5'
-            ],
-            geoBypass: true,
-            geoBypassCountry: 'US'
-        }).catch(async (error) => {
-            console.error('[DEBUG] Error inicial, reintentando con formato alternativo:', error);
-            return youtubedl(currentSong.url, {
-                dumpSingleJson: true,
-                format: 'best',
-                noWarnings: true,
-                noCallHome: true,
-                addHeader: [
-                    'referer:youtube.com',
-                    'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                    'accept-language:en-US,en;q=0.5'
-                ],
-                geoBypass: true,
-                geoBypassCountry: 'US'
-            });
+            noWarnings: true,
+            noCallHome: true
         });
 
-        if (!output) {
-            console.error('[DEBUG] No se pudo obtener output del video');
-            throw new Error('No se pudo obtener la información del video');
-        }
-
-        if (!output.url) {
-            console.error('[DEBUG] Output completo:', output);
+        if (!output || !output.url) {
             throw new Error('No se pudo obtener la URL del stream');
         }
 
         console.log('[DEBUG] URL del stream obtenida correctamente');
 
-        // Crear proceso FFmpeg para manejar el streaming
+        // Crear proceso FFmpeg
         const ffmpeg = spawn('ffmpeg', [
             '-reconnect', '1',
             '-reconnect_streamed', '1',
@@ -209,41 +176,26 @@ async function playNext(guildId, message) {
             '-acodec', 'pcm_s16le',
             '-loglevel', 'warning',
             '-vn',
-            '-bufsize', '512k',
             'pipe:1'
         ]);
 
-        ffmpeg.stderr.on('data', (data) => {
-            console.log(`[DEBUG] FFmpeg: ${data.toString()}`);
-        });
-
-        // Crear recurso de audio usando el stream de FFmpeg
+        // Crear recurso de audio
         const resource = createAudioResource(ffmpeg.stdout, {
             inputType: StreamType.Raw,
-            inlineVolume: true,
-            silencePaddingFrames: 50
+            inlineVolume: true
         });
         
-        // Configurar volumen
         resource.volume.setVolume(serverQueue.volume / 10);
         
-        // Guardar información para comandos
         serverQueue.currentResource = resource;
         serverQueue.currentFfmpeg = ffmpeg;
         serverQueue.currentStartTime = Date.now();
         serverQueue.audioUrl = output.url;
         
-        // Crear reproductor si no existe
         if (!serverQueue.player) {
             console.log('[DEBUG] Creando nuevo reproductor de audio');
-            serverQueue.player = createAudioPlayer({
-                behaviors: {
-                    noSubscriber: 'pause',
-                    maxMissedFrames: 50
-                }
-            });
+            serverQueue.player = createAudioPlayer();
             
-            // Configurar eventos del reproductor
             serverQueue.player.on(AudioPlayerStatus.Idle, () => {
                 console.log('[DEBUG] Reproductor inactivo');
                 
@@ -278,10 +230,9 @@ async function playNext(guildId, message) {
             serverQueue.connection.subscribe(serverQueue.player);
         }
         
-        // Reproducir la canción
         serverQueue.player.play(resource);
         
-        // Verificar si la reproducción comienza correctamente
+        // Verificar reproducción
         let playbackStarted = false;
         const playbackCheck = setTimeout(() => {
             if (!playbackStarted && serverQueue.player.state.status !== AudioPlayerStatus.Playing) {
@@ -315,7 +266,7 @@ async function playNext(guildId, message) {
             }
             
             embed.setFooter({ text: `Solicitado por ${currentSong.requestedBy}` });
-                
+            
             message.channel.send({ embeds: [embed] });
         });
         
@@ -356,61 +307,27 @@ async function processYoutubeUrl(url, message, voiceChannel, statusMessage) {
     try {
         console.log('[DEBUG] Obteniendo info del video');
         
-        // Intentar obtener información usando la API de YouTube primero
+        // Obtener información usando la API de YouTube
         const videoId = extractVideoId(url);
-        let songInfo;
-        
-        if (videoId) {
-            try {
-                const videoDetails = await getVideoDetails(videoId);
-                if (videoDetails) {
-                    songInfo = {
-                        title: videoDetails.title,
-                        url: url,
-                        duration: videoDetails.duration,
-                        thumbnail: videoDetails.thumbnail,
-                        requestedBy: message.author.username,
-                        channel: videoDetails.channel,
-                        views: videoDetails.views,
-                        likes: videoDetails.likes,
-                        publishedAt: videoDetails.publishedAt
-                    };
-                    console.log('[DEBUG] Información obtenida desde API de Google');
-                }
-            } catch (apiError) {
-                console.error('[DEBUG] Error con API de Google:', apiError);
-            }
+        if (!videoId) {
+            throw new Error('URL de YouTube inválida');
         }
-        
-        // Si no se pudo obtener con la API, usar youtube-dl como respaldo
-        if (!songInfo) {
-            console.log('[DEBUG] Usando youtube-dl como respaldo');
-            const output = await youtubedl(url, {
-                dumpSingleJson: true,
-                noWarnings: true,
-                noCallHome: true,
-                preferFreeFormats: true,
-                format: 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio',
-                youtubeSkipDashManifest: true,
-                extractAudio: true,
-                audioFormat: 'best',
-                audioQuality: '0',
-                retries: 10,
-                fragmentRetries: 10
-            });
 
-            if (!output) {
-                throw new Error('No se pudo obtener información del video');
-            }
-
-            songInfo = {
-                title: output.title,
-                url: url,
-                duration: output.duration,
-                thumbnail: output.thumbnail,
-                requestedBy: message.author.username
-            };
+        const videoDetails = await getVideoDetails(videoId);
+        if (!videoDetails) {
+            throw new Error('No se pudo obtener información del video');
         }
+
+        const songInfo = {
+            title: videoDetails.title,
+            url: url,
+            duration: videoDetails.duration,
+            thumbnail: videoDetails.thumbnail,
+            requestedBy: message.author.username,
+            channel: videoDetails.channel
+        };
+
+        console.log('[DEBUG] Información obtenida desde API de Google');
 
         // Verificar si la canción ya existe en la cola
         if (serverQueue) {
@@ -440,22 +357,18 @@ async function processYoutubeUrl(url, message, voiceChannel, statusMessage) {
                 processing: false
             };
             
-            // Agregar la canción a la cola
             queueConstruct.songs.push(songInfo);
             queues.set(guildId, queueConstruct);
             
             console.log(`[DEBUG] Cola creada para ${guildId}`);
             
             try {
-                // Crear una conexión al canal de voz
-                console.log(`[DEBUG] Conectando al canal de voz ${voiceChannel.id}`);
                 const connection = joinVoiceChannel({
                     channelId: voiceChannel.id,
                     guildId: guildId,
                     adapterCreator: message.guild.voiceAdapterCreator,
                 });
                 
-                // Establecer manejadores de eventos para la conexión
                 let readyLock = false;
                 connection.on(VoiceConnectionStatus.Ready, () => {
                     if (readyLock) return;
@@ -478,7 +391,6 @@ async function processYoutubeUrl(url, message, voiceChannel, statusMessage) {
                 
                 queueConstruct.connection = connection;
                 
-                // Comenzar a reproducir
                 await statusMessage.edit(`✅ **${songInfo.title}** ha sido añadida a la cola.`);
                 await playNext(guildId, message);
                 
@@ -489,16 +401,14 @@ async function processYoutubeUrl(url, message, voiceChannel, statusMessage) {
                 return;
             }
         } else {
-            // Ya existe una cola, verificar si está procesando
             if (serverQueue.processing) {
                 console.log('[DEBUG] Ya se está procesando una solicitud para esta cola');
                 return;
             }
             
             serverQueue.processing = true;
-            
-            // Ya existe una cola, solo agregar la canción
             serverQueue.songs.push(songInfo);
+            
             console.log(`[DEBUG] Canción añadida a la cola existente: ${songInfo.title}`);
             
             const embed = new EmbedBuilder()
@@ -512,9 +422,10 @@ async function processYoutubeUrl(url, message, voiceChannel, statusMessage) {
             }
             
             if (songInfo.duration) {
-                const minutes = Math.floor(songInfo.duration / 60);
-                const seconds = songInfo.duration % 60;
-                embed.addFields({ name: 'Duración', value: `${minutes}:${seconds.toString().padStart(2, '0')}` });
+                embed.addFields({ 
+                    name: 'Info', 
+                    value: `⏱️ ${formatTime(songInfo.duration)} | 📺 ${songInfo.channel}` 
+                });
             }
             
             await statusMessage.edit({ content: null, embeds: [embed] });
