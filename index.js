@@ -161,16 +161,27 @@ async function playNext(guildId, message) {
             audioFormat: 'mp3',
             addHeader: [
                 'referer:youtube.com',
-                'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            ]
+                'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'accept-language:en-US,en;q=0.5'
+            ],
+            geoBypass: true,
+            geoBypassCountry: 'US'
         }).catch(async (error) => {
             console.error('[DEBUG] Error inicial, reintentando con formato alternativo:', error);
-            // Reintentar con formato alternativo más simple
             return youtubedl(currentSong.url, {
                 dumpSingleJson: true,
                 format: 'best',
                 noWarnings: true,
-                noCallHome: true
+                noCallHome: true,
+                addHeader: [
+                    'referer:youtube.com',
+                    'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'accept-language:en-US,en;q=0.5'
+                ],
+                geoBypass: true,
+                geoBypassCountry: 'US'
             });
         });
 
@@ -445,7 +456,10 @@ async function processYoutubeUrl(url, message, voiceChannel, statusMessage) {
                 });
                 
                 // Establecer manejadores de eventos para la conexión
+                let readyLock = false;
                 connection.on(VoiceConnectionStatus.Ready, () => {
+                    if (readyLock) return;
+                    readyLock = true;
                     console.log('[DEBUG] Conexión lista');
                 });
                 
@@ -456,6 +470,7 @@ async function processYoutubeUrl(url, message, voiceChannel, statusMessage) {
                             queueConstruct.currentFfmpeg.kill();
                         }
                         queues.delete(guildId);
+                        readyLock = false;
                     } catch (err) {
                         console.error('[DEBUG] Error al limpiar la cola:', err);
                     }
